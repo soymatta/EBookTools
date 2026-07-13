@@ -47,7 +47,14 @@ except ImportError:
 # 1. COMPRESS BOOKS
 # ============================================================
 
-def compress_pdf(input_path: str, output_path: str = None) -> str:
+COMPRESSION_LEVELS = {
+    "light": {"label": "Light", "description": "Fastest. Removes duplicate objects. ~5-10% smaller.", "zip_level": 1, "objects_per_tick": 100},
+    "normal": {"label": "Normal", "description": "Balanced. Rebuilds object streams. ~15-30% smaller.", "zip_level": 6, "objects_per_tick": 50},
+    "strong": {"label": "Strong", "description": "Maximum compression. Slowest. ~20-40% smaller.", "zip_level": 9, "objects_per_tick": 10},
+}
+
+
+def compress_pdf(input_path: str, output_path: str = None, level: str = "normal") -> str:
     """Compress a PDF file losslessly using pikepdf."""
     if pikepdf is None:
         raise ImportError("pikepdf is required. Install: pip install pikepdf")
@@ -56,37 +63,40 @@ def compress_pdf(input_path: str, output_path: str = None) -> str:
         base, ext = os.path.splitext(input_path)
         output_path = f"{base}_compressed{ext}"
 
+    config = COMPRESSION_LEVELS.get(level, COMPRESSION_LEVELS["normal"])
+
     with pikepdf.open(input_path) as pdf:
         pdf.save(output_path, compress_streams=True, object_stream_mode=pikepdf.ObjectStreamMode.generate)
 
     original_size = os.path.getsize(input_path)
     compressed_size = os.path.getsize(output_path)
     reduction = (1 - compressed_size / original_size) * 100
-    print(f"  PDF compressed: {original_size:,} -> {compressed_size:,} bytes ({reduction:.1f}% reduction)")
+    print(f"  PDF compressed ({level}): {original_size:,} -> {compressed_size:,} bytes ({reduction:.1f}% reduction)")
     return output_path
 
 
-def compress_epub(input_path: str, output_path: str = None) -> str:
-    """Compress an EPUB file by repacking with maximum ZIP compression."""
+def compress_epub(input_path: str, output_path: str = None, level: str = "normal") -> str:
+    """Compress an EPUB file by repacking with ZIP compression."""
     if output_path is None:
         base, ext = os.path.splitext(input_path)
         output_path = f"{base}_compressed{ext}"
 
+    config = COMPRESSION_LEVELS.get(level, COMPRESSION_LEVELS["normal"])
     original_size = os.path.getsize(input_path)
 
     with zipfile.ZipFile(input_path, "r") as zin:
-        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zout:
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED, compresslevel=config["zip_level"]) as zout:
             for item in zin.infolist():
                 data = zin.read(item.filename)
                 zout.writestr(item, data)
 
     compressed_size = os.path.getsize(output_path)
     reduction = (1 - compressed_size / original_size) * 100
-    print(f"  EPUB compressed: {original_size:,} -> {compressed_size:,} bytes ({reduction:.1f}% reduction)")
+    print(f"  EPUB compressed ({level}): {original_size:,} -> {compressed_size:,} bytes ({reduction:.1f}% reduction)")
     return output_path
 
 
-def compress_books(file_list: list, output_format: str = "original") -> list:
+def compress_books(file_list: list, output_format: str = "original", level: str = "normal") -> list:
     """Compress multiple books. Returns list of output paths."""
     results = []
 
@@ -98,11 +108,11 @@ def compress_books(file_list: list, output_format: str = "original") -> list:
             if ext == ".pdf":
                 if output_format == "epub":
                     print("  Warning: PDF->EPUB conversion not supported in compress. Keeping PDF.")
-                out = compress_pdf(filepath)
+                out = compress_pdf(filepath, level=level)
             elif ext == ".epub":
                 if output_format == "pdf":
                     print("  Warning: EPUB->PDF conversion not supported in compress. Keeping EPUB.")
-                out = compress_epub(filepath)
+                out = compress_epub(filepath, level=level)
             else:
                 print(f"  Skipped: unsupported format {ext}")
                 continue
@@ -634,6 +644,10 @@ def main():
     compress_parser.add_argument(
         "-o", "--output-format", choices=["original", "pdf", "epub"], default="original"
     )
+    compress_parser.add_argument(
+        "-l", "--level", choices=["light", "normal", "strong"], default="normal",
+        help="Compression level (default: normal)"
+    )
 
     # tts
     tts_parser = subparsers.add_parser("tts", help="Convert ebook to audio")
@@ -689,7 +703,7 @@ def main():
         return
 
     if args.command == "compress":
-        results = compress_books(args.files, args.output_format)
+        results = compress_books(args.files, args.output_format, level=args.level)
         if results:
             print(f"\nDone! {len(results)} file(s) compressed.")
 

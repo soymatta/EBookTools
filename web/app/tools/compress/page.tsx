@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
-import { compressPDF } from "@/lib/pdf-utils"
+import { compressPDF, type CompressionLevel, COMPRESSION_LEVELS } from "@/lib/pdf-utils"
 import { compressEPUB } from "@/lib/epub-utils"
 
 type OutputFormat = "original" | "pdf" | "epub"
@@ -18,6 +18,7 @@ interface ProcessedFile {
 export default function CompressPage() {
   const [files, setFiles] = useState<File[]>([])
   const [outputFormat, setOutputFormat] = useState<OutputFormat>("original")
+  const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("normal")
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [results, setResults] = useState<ProcessedFile[]>([])
@@ -48,9 +49,9 @@ export default function CompressPage() {
         const originalSize = file.size
 
         if (ext === "pdf") {
-          blob = await compressPDF(file)
+          blob = await compressPDF(file, compressionLevel)
         } else if (ext === "epub") {
-          blob = await compressEPUB(file)
+          blob = await compressEPUB(file, compressionLevel)
         } else {
           continue
         }
@@ -81,15 +82,6 @@ export default function CompressPage() {
     if (bytes < 1024) return bytes + " B"
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
     return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-  }
-
-  const getOutputBlob = (): Blob | null => {
-    if (results.length === 0) return null
-    if (results.length === 1) return results[0].blob
-
-    // For multiple files, create a zip
-    // TODO: implement JSZip for multi-file output
-    return results[0].blob
   }
 
   return (
@@ -138,23 +130,55 @@ export default function CompressPage() {
       )}
 
       {files.length > 0 && (
-        <div className="mt-6">
-          <label className="block text-sm font-medium mb-2">Output Format</label>
-          <div className="flex gap-2">
-            {(["original", "pdf", "epub"] as OutputFormat[]).map((fmt) => (
-              <button
-                key={fmt}
-                onClick={() => setOutputFormat(fmt)}
-                className="px-4 py-2 rounded-lg text-sm border transition-colors"
-                style={{
-                  backgroundColor: outputFormat === fmt ? "var(--accent)" : "var(--bg-card)",
-                  borderColor: outputFormat === fmt ? "var(--accent)" : "var(--border)",
-                  color: outputFormat === fmt ? "white" : "var(--text-primary)",
-                }}
-              >
-                {fmt === "original" ? "Same as input" : fmt.toUpperCase()}
-              </button>
-            ))}
+        <div className="mt-6 space-y-6">
+          <div>
+            <label className="block text-sm font-medium mb-2">Compression Level</label>
+            <div className="grid grid-cols-3 gap-3">
+              {(Object.keys(COMPRESSION_LEVELS) as CompressionLevel[]).map((level) => {
+                const config = COMPRESSION_LEVELS[level]
+                const isActive = compressionLevel === level
+                return (
+                  <button
+                    key={level}
+                    onClick={() => setCompressionLevel(level)}
+                    className="p-3 rounded-lg border text-left transition-all"
+                    style={{
+                      backgroundColor: isActive ? "var(--accent)" : "var(--bg-card)",
+                      borderColor: isActive ? "var(--accent)" : "var(--border)",
+                      color: isActive ? "white" : "var(--text-primary)",
+                    }}
+                  >
+                    <div className="text-sm font-semibold mb-1">{config.label}</div>
+                    <div
+                      className="text-xs leading-relaxed"
+                      style={{ color: isActive ? "rgba(255,255,255,0.8)" : "var(--text-secondary)" }}
+                    >
+                      {config.description}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Output Format</label>
+            <div className="flex gap-2">
+              {(["original", "pdf", "epub"] as OutputFormat[]).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => setOutputFormat(fmt)}
+                  className="px-4 py-2 rounded-lg text-sm border transition-colors"
+                  style={{
+                    backgroundColor: outputFormat === fmt ? "var(--accent)" : "var(--bg-card)",
+                    borderColor: outputFormat === fmt ? "var(--accent)" : "var(--border)",
+                    color: outputFormat === fmt ? "white" : "var(--text-primary)",
+                  }}
+                >
+                  {fmt === "original" ? "Same as input" : fmt.toUpperCase()}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

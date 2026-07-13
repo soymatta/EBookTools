@@ -1,9 +1,11 @@
 import JSZip from "jszip"
+import type { CompressionLevel } from "./pdf-utils"
+import { COMPRESSION_LEVELS } from "./pdf-utils"
 
-export async function compressEPUB(file: File): Promise<Blob> {
+export async function compressEPUB(file: File, level: CompressionLevel = "normal"): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer()
   const zip = await JSZip.loadAsync(arrayBuffer)
-
+  const config = COMPRESSION_LEVELS[level]
   const newZip = new JSZip()
 
   const files = Object.keys(zip.files)
@@ -14,14 +16,14 @@ export async function compressEPUB(file: File): Promise<Blob> {
     const content = await zipEntry.async("uint8array")
     newZip.file(filename, content, {
       compression: "DEFLATE",
-      compressionOptions: { level: 9 },
+      compressionOptions: { level: config.epubZipLevel },
     })
   }
 
   const compressed = await newZip.generateAsync({
     type: "uint8array",
     compression: "DEFLATE",
-    compressionOptions: { level: 9 },
+    compressionOptions: { level: config.epubZipLevel },
   })
 
   return new Blob([compressed.slice().buffer as ArrayBuffer], { type: "application/epub+zip" })

@@ -31,6 +31,15 @@ function sanitizeFilename(str: string): string {
     .trim()
 }
 
+function cleanFilenameForSearch(filename: string): string {
+  let name = filename.replace(/\.[^.]+$/, "")
+  name = name.replace(/[_-]+/g, " ")
+  name = name.replace(/\b(pdf|epub|fb2|djvu|mobi|azw3|cbz|cbr)\b/gi, "")
+  name = name.replace(/\b(1080p|720p|480p|hd|cam|web|dl|bluray|dvdrip|brrip)\b/gi, "")
+  name = name.replace(/\s+/g, " ")
+  return name.trim()
+}
+
 export function applyRenameFormat(template: string, metadata: BookMetadata): string {
   let result = template
   result = result.replace(/\{title\}/g, metadata.title || "Unknown Title")
@@ -79,9 +88,13 @@ async function extractFromEPUB(file: File): Promise<BookMetadata | null> {
       return el?.textContent || ""
     }
 
+    const title = getMeta("title")
+    const author = getMeta("creator")
+    if (!title && !author) return null
+
     return {
-      title: getMeta("title"),
-      author: getMeta("creator"),
+      title,
+      author,
       year: getMeta("date")?.substring(0, 4) || "",
       category: "",
       isbn: getMeta("identifier"),
@@ -101,9 +114,13 @@ async function extractFromPDF(file: File): Promise<BookMetadata | null> {
     const info = metadata.info as Record<string, string> | undefined
     if (!info) return null
 
+    const title = info.Title || ""
+    const author = info.Author || ""
+    if (!title && !author) return null
+
     return {
-      title: info.Title || "",
-      author: info.Author || "",
+      title,
+      author,
       year: info.CreationDate?.substring(0, 4) || "",
       category: info.Subject || "",
       isbn: "",
@@ -123,9 +140,13 @@ export async function searchOpenLibrary(query: string): Promise<BookMetadata | n
     if (!data.docs || data.docs.length === 0) return null
 
     const doc = data.docs[0]
+    const title = doc.title || ""
+    const author = doc.author_name?.[0] || ""
+    if (!title) return null
+
     return {
-      title: doc.title || "",
-      author: doc.author_name?.[0] || "",
+      title,
+      author,
       year: doc.first_publish_year?.toString() || "",
       category: doc.subject?.[0] || "",
       isbn: doc.isbn?.[0] || "",
@@ -145,8 +166,11 @@ export async function searchGoogleBooks(query: string): Promise<BookMetadata | n
     if (!data.items || data.items.length === 0) return null
 
     const info = data.items[0].volumeInfo
+    const title = info.title || ""
+    if (!title) return null
+
     return {
-      title: info.title || "",
+      title,
       author: info.authors?.[0] || "",
       year: info.publishedDate?.substring(0, 4) || "",
       category: info.categories?.[0] || "",
@@ -157,12 +181,7 @@ export async function searchGoogleBooks(query: string): Promise<BookMetadata | n
   }
 }
 
-export async function lookupMetadata(
-  fileMetadata: BookMetadata | null
-): Promise<BookMetadata | null> {
-  if (!fileMetadata) return null
-
-  const query = [fileMetadata.title, fileMetadata.author].filter(Boolean).join(" ")
+async function searchMetadata(query: string): Promise<BookMetadata | null> {
   if (!query.trim()) return null
 
   const olResult = await searchOpenLibrary(query)
@@ -182,8 +201,24 @@ export async function autoRenameBooks(
 
   for (const file of files) {
     const fileMetadata = await extractMetadataFromFile(file)
-    const apiMetadata = await lookupMetadata(fileMetadata)
-    const metadata = apiMetadata || fileMetadata
+    const filenameQuery = cleanFilenameForSearch(file.name)
+
+    let metadata: BookMetadata | null = null
+
+    if (fileMetadata?.title) {
+      const apiQuery = fileMetadata.author
+        ? `${fileMetadata.title} ${fileMetadata.author}`
+        : fileMetadata.title
+      metadata = await searchMetadata(apiQuery)
+    }
+
+    if (!metadata && filenameQuery) {
+      metadata = await searchMetadata(filenameQuery)
+    }
+
+    if (!metadata && fileMetadata) {
+      metadata = fileMetadata
+    }
 
     const ext = "." + file.name.split(".").pop()?.toLowerCase()
     let newName = ""
@@ -194,11 +229,15 @@ export async function autoRenameBooks(
       newName = file.name
     }
 
+    const confidence = metadata?.title
+      ? (fileMetadata?.title ? 0.95 : 0.7)
+      : 0.2
+
     results.push({
       originalName: file.name,
       newName,
       metadata,
-      confidence: metadata?.title ? 0.9 : 0.3,
+      confidence,
     })
   }
 
