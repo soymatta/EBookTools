@@ -1,0 +1,28 @@
+{
+  "name": "ebooktools-web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19",
+    "pdf-lib": "^1.17",
+    "epubjs": "^0.3",
+    "jszip": "^3.10",
+    "pdfjs-dist": "^4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/node": "^22",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4"
+  }
+}
