@@ -41,6 +41,15 @@ After completing a significant feature or tool, commit immediately so the deploy
 
 Do NOT commit after every small tweak. Group related small edits into one commit.
 
+## Git workflow
+
+After every commit or series of commits:
+1. `git pull --rebase` to sync with remote
+2. If there are conflicts, STOP and ask the user how to resolve them before pushing
+3. `git push` to update the remote
+
+Do not skip the pull step. Always pull before pushing.
+
 ## Adding a new tool
 
 The web app uses a **registry pattern**. To add a tool:
