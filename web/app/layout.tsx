@@ -5,6 +5,9 @@ import Navbar from "@/components/Navbar"
 export const metadata: Metadata = {
   title: "EBookTools",
   description: "Set of tools for your EBooks and EReaders",
+  icons: {
+    icon: "/favicon.svg",
+  },
 }
 
 export default function RootLayout({

@@ -6,6 +6,10 @@ export interface BookMetadata {
   year: string
   category: string
   isbn: string
+  coverUrl: string
+  description: string
+  publisher: string
+  pageCount: string
 }
 
 export interface RenameResult {
@@ -15,14 +19,12 @@ export interface RenameResult {
   confidence: number
 }
 
-const RENAME_FORMATS = [
+export const RENAME_FORMATS = [
   { id: "title-author", label: "{title} - {author}", template: "{title} - {author}" },
   { id: "title-author-year", label: "{title} - {author} ({year})", template: "{title} - {author} ({year})" },
   { id: "title-author-category", label: "{title} - {author} - {category}", template: "{title} - {author} - {category}" },
   { id: "author-title", label: "{author} - {title}", template: "{author} - {title}" },
 ]
-
-export { RENAME_FORMATS }
 
 function sanitizeFilename(str: string): string {
   return str
@@ -33,9 +35,10 @@ function sanitizeFilename(str: string): string {
 
 function cleanFilenameForSearch(filename: string): string {
   let name = filename.replace(/\.[^.]+$/, "")
-  name = name.replace(/[_-]+/g, " ")
-  name = name.replace(/\b(pdf|epub|fb2|djvu|mobi|azw3|cbz|cbr)\b/gi, "")
-  name = name.replace(/\b(1080p|720p|480p|hd|cam|web|dl|bluray|dvdrip|brrip)\b/gi, "")
+  name = name.replace(/[_]+/g, " ")
+  name = name.replace(/\b(pdf|epub|fb2|djvu|mobi|azw3|cbz|cbr|azw)\b/gi, "")
+  name = name.replace(/\b(1080p|720p|480p|hd|cam|web|dl|bluray|dvdrip|brrip|repack|extended|uncut)\b/gi, "")
+  name = name.replace(/\b(v\d+|part\d+|vol\d+|\d+)\b/gi, "")
   name = name.replace(/\s+/g, " ")
   return name.trim()
 }
@@ -50,15 +53,14 @@ export function applyRenameFormat(template: string, metadata: BookMetadata): str
   return sanitizeFilename(result)
 }
 
+// ============================================================
+// FILE METADATA EXTRACTION
+// ============================================================
+
 export async function extractMetadataFromFile(file: File): Promise<BookMetadata | null> {
   const ext = file.name.split(".").pop()?.toLowerCase()
-
-  if (ext === "epub") {
-    return extractFromEPUB(file)
-  } else if (ext === "pdf") {
-    return extractFromPDF(file)
-  }
-
+  if (ext === "epub") return extractFromEPUB(file)
+  if (ext === "pdf") return extractFromPDF(file)
   return null
 }
 
@@ -88,16 +90,16 @@ async function extractFromEPUB(file: File): Promise<BookMetadata | null> {
       return el?.textContent || ""
     }
 
-    const title = getMeta("title")
-    const author = getMeta("creator")
-    if (!title && !author) return null
-
     return {
-      title,
-      author,
+      title: getMeta("title"),
+      author: getMeta("creator"),
       year: getMeta("date")?.substring(0, 4) || "",
-      category: "",
+      category: getMeta("subject"),
       isbn: getMeta("identifier"),
+      coverUrl: "",
+      description: getMeta("description"),
+      publisher: getMeta("publisher"),
+      pageCount: "",
     }
   } catch {
     return null
@@ -110,29 +112,32 @@ async function extractFromPDF(file: File): Promise<BookMetadata | null> {
     const buffer = await file.arrayBuffer()
     const pdf = await getDocument({ data: buffer }).promise
     const metadata = await pdf.getMetadata()
-
     const info = metadata.info as Record<string, string> | undefined
     if (!info) return null
 
-    const title = info.Title || ""
-    const author = info.Author || ""
-    if (!title && !author) return null
-
     return {
-      title,
-      author,
+      title: info.Title || "",
+      author: info.Author || "",
       year: info.CreationDate?.substring(0, 4) || "",
       category: info.Subject || "",
       isbn: "",
+      coverUrl: "",
+      description: info.Subject || "",
+      publisher: info.Producer || "",
+      pageCount: String(pdf.numPages),
     }
   } catch {
     return null
   }
 }
 
+// ============================================================
+// API SEARCH - Open Library + Google Books
+// ============================================================
+
 export async function searchOpenLibrary(query: string): Promise<BookMetadata | null> {
   try {
-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&fields=title,author_name,first_publish_year,isbn,subject&limit=1`
+    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&fields=title,author_name,first_publish_year,isbn,subject,publisher,number_of_pages_median,cover_i&limit=1`
     const res = await fetch(url)
     if (!res.ok) return null
 
@@ -144,12 +149,20 @@ export async function searchOpenLibrary(query: string): Promise<BookMetadata | n
     const author = doc.author_name?.[0] || ""
     if (!title) return null
 
+    const coverUrl = doc.cover_i
+      ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`
+      : ""
+
     return {
       title,
       author,
       year: doc.first_publish_year?.toString() || "",
       category: doc.subject?.[0] || "",
       isbn: doc.isbn?.[0] || "",
+      coverUrl,
+      description: "",
+      publisher: doc.publisher?.[0] || "",
+      pageCount: doc.number_of_pages_median?.toString() || "",
     }
   } catch {
     return null
@@ -169,29 +182,55 @@ export async function searchGoogleBooks(query: string): Promise<BookMetadata | n
     const title = info.title || ""
     if (!title) return null
 
+    const isbn = info.industryIdentifiers?.find(
+      (id: { type: string }) => id.type === "ISBN_13"
+    )?.identifier || info.industryIdentifiers?.find(
+      (id: { type: string }) => id.type === "ISBN_10"
+    )?.identifier || ""
+
     return {
       title,
       author: info.authors?.[0] || "",
       year: info.publishedDate?.substring(0, 4) || "",
       category: info.categories?.[0] || "",
-      isbn: info.industryIdentifiers?.find((id: { type: string }) => id.type === "ISBN_13")?.identifier || "",
+      isbn,
+      coverUrl: info.imageLinks?.thumbnail || "",
+      description: info.description || "",
+      publisher: info.publisher || "",
+      pageCount: info.pageCount?.toString() || "",
     }
   } catch {
     return null
   }
 }
 
+export async function searchByISBN(isbn: string): Promise<BookMetadata | null> {
+  if (!isbn) return null
+
+  const olResult = await searchOpenLibrary(`isbn:${isbn}`)
+  if (olResult?.title) return olResult
+
+  const gbResult = await searchGoogleBooks(`isbn:${isbn}`)
+  if (gbResult?.title) return gbResult
+
+  return null
+}
+
 async function searchMetadata(query: string): Promise<BookMetadata | null> {
   if (!query.trim()) return null
 
   const olResult = await searchOpenLibrary(query)
-  if (olResult && olResult.title) return olResult
+  if (olResult?.title) return olResult
 
   const gbResult = await searchGoogleBooks(query)
-  if (gbResult && gbResult.title) return gbResult
+  if (gbResult?.title) return gbResult
 
   return null
 }
+
+// ============================================================
+// AUTO RENAME
+// ============================================================
 
 export async function autoRenameBooks(
   files: File[],
@@ -205,6 +244,7 @@ export async function autoRenameBooks(
 
     let metadata: BookMetadata | null = null
 
+    // 1. If file has metadata, search API with it
     if (fileMetadata?.title) {
       const apiQuery = fileMetadata.author
         ? `${fileMetadata.title} ${fileMetadata.author}`
@@ -212,10 +252,20 @@ export async function autoRenameBooks(
       metadata = await searchMetadata(apiQuery)
     }
 
+    // 2. If no result, search with cleaned filename
     if (!metadata && filenameQuery) {
       metadata = await searchMetadata(filenameQuery)
     }
 
+    // 3. Try ISBN if found in filename
+    if (!metadata) {
+      const isbnMatch = filenameQuery.match(/\b(\d{10,13})\b/)
+      if (isbnMatch) {
+        metadata = await searchByISBN(isbnMatch[1])
+      }
+    }
+
+    // 4. Fallback to file metadata
     if (!metadata && fileMetadata) {
       metadata = fileMetadata
     }
@@ -223,7 +273,7 @@ export async function autoRenameBooks(
     const ext = "." + file.name.split(".").pop()?.toLowerCase()
     let newName = ""
 
-    if (metadata && (metadata.title || metadata.author)) {
+    if (metadata?.title || metadata?.author) {
       newName = applyRenameFormat(renameFormat, metadata) + ext
     } else {
       newName = file.name
