@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib"
+import { PDFDocument, type PDFFont } from "pdf-lib"
 import JSZip from "jszip"
 
 export async function epubToPDF(file: File): Promise<Blob> {
@@ -53,6 +53,7 @@ function extractTextFromHTML(html: string): string {
 
 function wrapText(
   text: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   font: any,
   fontSize: number,
   maxWidth: number

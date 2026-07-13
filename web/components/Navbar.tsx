@@ -1,11 +1,12 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { tools } from "@/app/tools/registry"
 
 export default function Navbar() {
   const pathname = usePathname()
+  const router = useRouter()
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 h-16 border-b flex items-center px-6"
@@ -39,7 +40,7 @@ export default function Navbar() {
             color: "var(--text-primary)",
           }}
           value={pathname}
-          onChange={(e) => (window.location.href = e.target.value)}
+          onChange={(e) => router.push(e.target.value)}
         >
           <option value="/">Home</option>
           {tools.map((tool) => (

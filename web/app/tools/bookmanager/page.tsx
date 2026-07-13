@@ -10,6 +10,7 @@ import {
   type RenameResult,
   type BookMetadata,
 } from "@/lib/autoname-utils"
+import { setPDFMetadata } from "@/lib/pdf-utils"
 
 type Tab = "metadata" | "rename"
 
@@ -65,8 +66,19 @@ export default function BookManagerPage() {
     setSaving(true)
     setSaveResult(null)
     try {
-      await new Promise(r => setTimeout(r, 500))
-      setSaveResult(new Blob(["Metadata save not yet implemented"], { type: "text/plain" }))
+      const ext = selectedFile.name.split(".").pop()?.toLowerCase()
+      if (ext === "pdf") {
+        const blob = await setPDFMetadata(selectedFile, {
+          title: metadata.title,
+          author: metadata.author,
+          subject: metadata.description,
+        })
+        setSaveResult(blob)
+      } else {
+        setSaveResult(new Blob(["EPUB metadata saving not yet implemented"], { type: "text/plain" }))
+      }
+    } catch (err) {
+      console.error("Save metadata error:", err)
     } finally {
       setSaving(false)
     }

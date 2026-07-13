@@ -8,8 +8,33 @@ import argparse
 import os
 import sys
 import zipfile
-import io
+import html
 from pathlib import Path
+from typing import Optional
+from html.parser import HTMLParser
+
+
+class _TextExtractor(HTMLParser):
+    """Shared HTML parser for extracting plain text from HTML/XHTML."""
+
+    def __init__(self):
+        super().__init__()
+        self.text = []
+        self._skip = False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._skip = True
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._skip = False
+        if tag in ("p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6"):
+            self.text.append("\n")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.text.append(data)
 
 try:
     import pikepdf
@@ -21,11 +46,6 @@ try:
     from ebooklib import epub
 except ImportError:
     ebooklib = None
-
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
 
 try:
     import pyttsx3
@@ -76,7 +96,9 @@ def compress_pdf(input_path: str, output_path: str = None, level: str = "normal"
 
 
 def compress_epub(input_path: str, output_path: str = None, level: str = "normal") -> str:
-    """Compress an EPUB file by repacking with ZIP compression."""
+    """Compress an EPUB file by removing junk and repacking with better compression."""
+    import re
+
     if output_path is None:
         base, ext = os.path.splitext(input_path)
         output_path = f"{base}_compressed{ext}"
@@ -84,15 +106,23 @@ def compress_epub(input_path: str, output_path: str = None, level: str = "normal
     config = COMPRESSION_LEVELS.get(level, COMPRESSION_LEVELS["normal"])
     original_size = os.path.getsize(input_path)
 
+    junk_pattern = re.compile(r"(^\.|Thumbs\.db|desktop\.ini|__MACOSX|\.DS_Store)", re.IGNORECASE)
+
     with zipfile.ZipFile(input_path, "r") as zin:
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED, compresslevel=config["zip_level"]) as zout:
+            removed = 0
             for item in zin.infolist():
+                if junk_pattern.search(item.filename):
+                    removed += 1
+                    continue
                 data = zin.read(item.filename)
                 zout.writestr(item, data)
 
     compressed_size = os.path.getsize(output_path)
     reduction = (1 - compressed_size / original_size) * 100
     print(f"  EPUB compressed ({level}): {original_size:,} -> {compressed_size:,} bytes ({reduction:.1f}% reduction)")
+    if removed:
+        print(f"  Removed {removed} junk file(s)")
     return output_path
 
 
@@ -127,7 +157,7 @@ def compress_books(file_list: list, output_format: str = "original", level: str 
 # 2. EBOOK TO VOICE (TTS)
 # ============================================================
 
-def preview_voice(voice_id: int = None, speed: float = 1.0, volume: float = 1.0):
+def preview_voice(voice_id: Optional[int] = None, speed: float = 1.0, volume: float = 1.0):
     """Preview a TTS voice with sample text."""
     if pyttsx3 is None:
         raise ImportError("pyttsx3 is required. Install: pip install pyttsx3")
@@ -175,29 +205,7 @@ def extract_text_from_epub(filepath: str) -> str:
 
     for item in book.get_items():
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
-            from html.parser import HTMLParser
-
-            class TextExtractor(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.text = []
-                    self._skip = False
-
-                def handle_starttag(self, tag, attrs):
-                    if tag in ("script", "style"):
-                        self._skip = True
-
-                def handle_endtag(self, tag):
-                    if tag in ("script", "style"):
-                        self._skip = False
-                    if tag in ("p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6"):
-                        self.text.append("\n")
-
-                def handle_data(self, data):
-                    if not self._skip:
-                        self.text.append(data)
-
-            extractor = TextExtractor()
+            extractor = _TextExtractor()
             content = item.get_content().decode("utf-8", errors="replace")
             extractor.feed(content)
             text_parts.append("".join(extractor.text))
@@ -210,20 +218,17 @@ def extract_text_from_pdf(filepath: str) -> str:
     if fitz is None:
         raise ImportError("PyMuPDF is required. Install: pip install PyMuPDF")
 
-    doc = fitz.open(filepath)
-    text_parts = []
-
-    for page in doc:
-        text_parts.append(page.get_text())
-
-    doc.close()
+    with fitz.open(filepath) as doc:
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
     return "\n\n".join(text_parts)
 
 
 def text_to_speech(
     text: str,
     output_path: str,
-    voice_id: int = None,
+    voice_id: Optional[int] = None,
     speed: float = 1.0,
     volume: float = 1.0,
 ):
@@ -248,14 +253,14 @@ def text_to_speech(
 def ebook_to_audio(
     input_path: str,
     output_path: str = None,
-    voice_id: int = None,
+    voice_id: Optional[int] = None,
     speed: float = 1.0,
     volume: float = 1.0,
 ):
     """Convert an ebook (PDF/EPUB) to an audio file."""
     if output_path is None:
         base, _ = os.path.splitext(input_path)
-        output_path = f"{base}.mp3"
+        output_path = f"{base}.wav"
 
     ext = Path(input_path).suffix.lower()
     print(f"  Extracting text from {ext}...")
@@ -301,29 +306,7 @@ def epub_to_pdf(input_path: str, output_path: str = None) -> str:
 
     for item in book.get_items():
         if item.get_type() == ebooklib.ITEM_DOCUMENT:
-            from html.parser import HTMLParser
-
-            class SimpleHTMLParser(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.text = []
-                    self._skip = False
-
-                def handle_starttag(self, tag, attrs):
-                    if tag in ("script", "style"):
-                        self._skip = True
-
-                def handle_endtag(self, tag):
-                    if tag in ("script", "style"):
-                        self._skip = False
-                    if tag in ("p", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6"):
-                        self.text.append("\n")
-
-                def handle_data(self, data):
-                    if not self._skip:
-                        self.text.append(data)
-
-            parser = SimpleHTMLParser()
+            parser = _TextExtractor()
             content = item.get_content().decode("utf-8", errors="replace")
             parser.feed(content)
             page_text = "".join(parser.text).strip()
@@ -349,27 +332,24 @@ def pdf_to_epub(input_path: str, output_path: str = None) -> str:
         base, _ = os.path.splitext(input_path)
         output_path = f"{base}.epub"
 
-    doc = fitz.open(input_path)
+    with fitz.open(input_path) as doc:
+        book = epub.EpubBook()
+        book.set_identifier("pdf-conversion")
+        book.set_title(os.path.splitext(os.path.basename(input_path))[0])
+        book.set_language("en")
 
-    book = epub.EpubBook()
-    book.set_identifier("pdf-conversion")
-    book.set_title(os.path.splitext(os.path.basename(input_path))[0])
-    book.set_language("en")
-
-    chapters = []
-    for i, page in enumerate(doc):
-        text = page.get_text()
-        if text.strip():
-            chapter = epub.EpubHtml(
-                title=f"Page {i + 1}",
-                file_name=f"page_{i + 1}.xhtml",
-                lang="en",
-            )
-            chapter.content = f"<h1>Page {i + 1}</h1><p>{text.replace(chr(10), '</p><p>')}</p>"
-            book.add_item(chapter)
-            chapters.append(chapter)
-
-    doc.close()
+        chapters = []
+        for i, page in enumerate(doc):
+            text = page.get_text()
+            if text.strip():
+                chapter = epub.EpubHtml(
+                    title=f"Page {i + 1}",
+                    file_name=f"page_{i + 1}.xhtml",
+                    lang="en",
+                )
+                chapter.content = f"<h1>Page {i + 1}</h1><p>{html.escape(text).replace(chr(10), '</p><p>')}</p>"
+                book.add_item(chapter)
+                chapters.append(chapter)
 
     # Table of contents
     book.toc = [epub.Link(ch.file_name, ch.title, ch.title) for ch in chapters]
@@ -422,13 +402,12 @@ def get_epub_metadata(filepath: str) -> dict:
         raise ImportError("ebooklib is required. Install: pip install ebooklib")
 
     book = epub.read_epub(filepath)
-    ns = {"dc": "http://purl.org/dc/elements/1.1/"}
 
     def get_meta(prop):
         try:
             items = book.get_metadata("DC", prop)
             return str(items[0][0]) if items else ""
-        except:
+        except Exception:
             return ""
 
     return {
@@ -502,6 +481,9 @@ def set_epub_metadata(filepath: str, metadata: dict, output_path: str = None) ->
     if metadata.get("identifier"):
         book.set_identifier(metadata["identifier"])
     if metadata.get("description"):
+        existing_descs = [(ns, key, val) for ns, key, val in book.metadata.get_metadata("DC") if key == "description"]
+        for ns, key, val in existing_descs:
+            book.metadata.remove_metadata("DC", key)
         book.add_metadata("DC", "description", metadata["description"])
 
     epub.write_epub(output_path, book)
@@ -546,7 +528,7 @@ def search_google_books(query: str) -> dict:
 
     url = f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(query)}&maxResults=1"
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers={"User-Agent": "EBookTools/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
             if data.get("items"):

@@ -6,18 +6,22 @@ import DownloadButton from "@/components/DownloadButton"
 import { compressPDF, type CompressionLevel, COMPRESSION_LEVELS } from "@/lib/pdf-utils"
 import { compressEPUB } from "@/lib/epub-utils"
 
-type OutputFormat = "original" | "pdf" | "epub"
-
 interface ProcessedFile {
   name: string
   blob: Blob
   originalSize: number
   compressedSize: number
+  error?: string
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + " B"
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
 }
 
 export default function CompressPage() {
   const [files, setFiles] = useState<File[]>([])
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>("original")
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("normal")
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ current: 0, total: 0 })
@@ -53,24 +57,24 @@ export default function CompressPage() {
         } else if (ext === "epub") {
           blob = await compressEPUB(file, compressionLevel)
         } else {
+          processed.push({ name: file.name, blob: file, originalSize, compressedSize: originalSize, error: "Unsupported format" })
           continue
         }
 
-        let outputName = file.name
-        if (outputFormat === "pdf" && ext !== "pdf") {
-          outputName = file.name.replace(/\.epub$/i, ".pdf")
-        } else if (outputFormat === "epub" && ext !== "epub") {
-          outputName = file.name.replace(/\.pdf$/i, ".epub")
-        }
-
         processed.push({
-          name: outputName,
+          name: file.name,
           blob,
           originalSize,
           compressedSize: blob.size,
         })
       } catch (err) {
-        console.error(`Error processing ${file.name}:`, err)
+        processed.push({
+          name: file.name,
+          blob: file,
+          originalSize: file.size,
+          compressedSize: file.size,
+          error: err instanceof Error ? err.message : "Unknown error",
+        })
       }
     }
 
@@ -78,11 +82,8 @@ export default function CompressPage() {
     setProcessing(false)
   }
 
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + " B"
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-  }
+  const successfulResults = results.filter(r => !r.error)
+  const failedResults = results.filter(r => r.error)
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
@@ -102,7 +103,7 @@ export default function CompressPage() {
         <div className="mt-6 space-y-2">
           {files.map((file, i) => (
             <div
-              key={i}
+              key={file.name + file.size}
               className="flex items-center justify-between p-3 rounded-lg border"
               style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
             >
@@ -121,6 +122,7 @@ export default function CompressPage() {
                 onClick={() => removeFile(i)}
                 className="text-sm px-2 py-1 rounded"
                 style={{ color: "var(--error)" }}
+                aria-label={`Remove ${file.name}`}
               >
                 ✕
               </button>
@@ -161,24 +163,11 @@ export default function CompressPage() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">Output Format</label>
-            <div className="flex gap-2">
-              {(["original", "pdf", "epub"] as OutputFormat[]).map((fmt) => (
-                <button
-                  key={fmt}
-                  onClick={() => setOutputFormat(fmt)}
-                  className="px-4 py-2 rounded-lg text-sm border transition-colors"
-                  style={{
-                    backgroundColor: outputFormat === fmt ? "var(--accent)" : "var(--bg-card)",
-                    borderColor: outputFormat === fmt ? "var(--accent)" : "var(--border)",
-                    color: outputFormat === fmt ? "white" : "var(--text-primary)",
-                  }}
-                >
-                  {fmt === "original" ? "Same as input" : fmt.toUpperCase()}
-                </button>
-              ))}
-            </div>
+          <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--bg-card)" }}>
+            <p style={{ color: "var(--text-secondary)" }}>
+              <strong>EPUB:</strong> Removes junk files (.DS_Store, Thumbs.db), optimizes images, repacks with better compression.
+              {" "}<strong>PDF:</strong> Rebuilds object streams and removes duplicate objects. Both are lossless — no quality loss.
+            </p>
           </div>
         </div>
       )}
@@ -186,7 +175,7 @@ export default function CompressPage() {
       {files.length > 0 && !processing && results.length === 0 && (
         <button
           onClick={processFiles}
-          className="mt-6 w-full py-3 rounded-lg font-medium transition-colors"
+          className="mt-6 w-full py-3 rounded-lg font-medium"
           style={{ backgroundColor: "var(--accent)", color: "white" }}
         >
           Compress {files.length} file{files.length > 1 ? "s" : ""}
@@ -197,14 +186,9 @@ export default function CompressPage() {
         <div className="mt-6">
           <div className="flex justify-between text-sm mb-1">
             <span>Processing...</span>
-            <span>
-              {progress.current} / {progress.total}
-            </span>
+            <span>{progress.current} / {progress.total}</span>
           </div>
-          <div
-            className="w-full h-2 rounded-full overflow-hidden"
-            style={{ backgroundColor: "var(--bg-card)" }}
-          >
+          <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--bg-card)" }}>
             <div
               className="h-full rounded-full transition-all duration-300"
               style={{
@@ -218,29 +202,60 @@ export default function CompressPage() {
 
       {results.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-lg font-semibold mb-4">Results</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Results</h2>
+            {successfulResults.length > 1 && (
+              <DownloadButton
+                data={successfulResults.map(r => r.blob)}
+                filename={successfulResults.map(r => r.name)}
+                label={`Download All (${successfulResults.length})`}
+              />
+            )}
+          </div>
+
           <div className="space-y-3">
-            {results.map((r, i) => (
-              <div
-                key={i}
-                className="p-4 rounded-lg border"
-                style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium">{r.name}</span>
-                  <span
-                    className="text-sm font-medium"
-                    style={{
-                      color:
-                        r.compressedSize < r.originalSize ? "var(--success)" : "var(--error)",
-                    }}
-                  >
-                    {r.compressedSize < r.originalSize ? "↓" : "↑"}{" "}
-                    {formatSize(r.originalSize)} → {formatSize(r.compressedSize)}(
-                    {Math.round((1 - r.compressedSize / r.originalSize) * 100)}%)
-                  </span>
+            {successfulResults.map((r) => {
+              const pct = Math.round((1 - r.compressedSize / r.originalSize) * 100)
+              const isSmaller = r.compressedSize < r.originalSize
+              const isSame = Math.abs(r.compressedSize - r.originalSize) < 1024
+
+              return (
+                <div
+                  key={r.name}
+                  className="p-4 rounded-lg border"
+                  style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">{r.name}</span>
+                    <span
+                      className="text-sm font-medium"
+                      style={{
+                        color: isSame ? "var(--text-secondary)" : isSmaller ? "var(--success)" : "var(--error)",
+                      }}
+                    >
+                      {isSame ? "≈ No change" : (
+                        <>
+                          {isSmaller ? "↓" : "↑"}{" "}
+                          {formatSize(r.originalSize)} → {formatSize(r.compressedSize)} ({isSmaller ? "-" : "+"}{Math.abs(pct)}%)
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <DownloadButton data={r.blob} filename={r.name} label="Download" />
                 </div>
-                <DownloadButton data={r.blob} filename={r.name} label="Download" />
+              )
+            })}
+
+            {failedResults.map((r) => (
+              <div
+                key={r.name}
+                className="p-4 rounded-lg border"
+                style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--error)" }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">{r.name}</span>
+                  <span className="text-sm" style={{ color: "var(--error)" }}>Error: {r.error}</span>
+                </div>
               </div>
             ))}
           </div>

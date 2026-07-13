@@ -109,8 +109,11 @@ Renames badly named ebook files using metadata fetched from free APIs.
 - **Google Books**: `https://www.googleapis.com/books/v1/volumes?q={title}+{author}` — returns `items[]` with `volumeInfo.title`, `volumeInfo.authors[]`, `volumeInfo.publishedDate`, `volumeInfo.categories[]`, `volumeInfo.industryIdentifiers[]`
 
 ### Files to create
-- `web/app/tools/autoname/page.tsx`
+- `web/app/tools/bookmanager/page.tsx` — combined metadata + rename tool
 - `web/lib/autoname-utils.ts` — API fetch + rename logic
+- `web/lib/pdf-utils.ts` — PDF compress + metadata get/set
+- `web/lib/epub-utils.ts` — EPUB compress + metadata get
+- `web/lib/convert-utils.ts` — EPUB → PDF conversion
 - Add entry to `web/app/tools/registry.ts`
 - Python equivalent in `ebook_tools.py`
 

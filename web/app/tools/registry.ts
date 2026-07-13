@@ -40,12 +40,4 @@ export const tools: Tool[] = [
     href: "/tools/bookmanager",
     accepts: [".pdf", ".epub"],
   },
-  {
-    id: "kindle",
-    name: "Kindle Browser",
-    description: "Browse and manage files on your Kindle via WebDAV",
-    icon: "📱",
-    href: "/tools/kindle",
-    accepts: [],
-  },
 ]
