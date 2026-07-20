@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import FileUploader from "@/components/FileUploader"
-import { compressEPUB } from "@/lib/epub-utils"
+import { formatSize } from "@/lib/utils"
 
 interface VoiceInfo {
   name: string
@@ -12,12 +12,6 @@ interface VoiceInfo {
 }
 
 const PREVIEW_TEXT = "Hello! This is a preview of the text to speech voice. You can adjust the speed and pitch to your liking."
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-}
 
 async function extractTextFromFile(file: File): Promise<string> {
   const ext = file.name.split(".").pop()?.toLowerCase()
@@ -81,6 +75,7 @@ export default function TTSPage() {
   const [selectedVoice, setSelectedVoice] = useState("")
   const [speed, setSpeed] = useState(1)
   const [pitch, setPitch] = useState(1)
+  const [volume, setVolume] = useState(1)
   const [processing, setProcessing] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [status, setStatus] = useState("")
@@ -122,11 +117,12 @@ export default function TTSPage() {
     }
     utterance.rate = speed
     utterance.pitch = pitch
+    utterance.volume = volume
     utterance.onend = () => setIsPlaying(false)
     utteranceRef.current = utterance
     speechSynthesis.speak(utterance)
     setIsPlaying(true)
-  }, [selectedVoice, speed, pitch, voices, isPlaying])
+  }, [selectedVoice, speed, pitch, volume, voices, isPlaying])
 
   const handleConvert = async () => {
     if (!file) return
@@ -153,6 +149,7 @@ export default function TTSPage() {
       }
       utterance.rate = speed
       utterance.pitch = pitch
+      utterance.volume = volume
       utterance.onend = () => {
         setIsPlaying(false)
         setStatus("Done!")
@@ -234,6 +231,12 @@ export default function TTSPage() {
           <label className="block text-sm font-medium mb-2">Pitch: {pitch.toFixed(1)}</label>
           <input type="range" min="0.5" max="2" step="0.1" value={pitch}
             onChange={(e) => setPitch(parseFloat(e.target.value))} className="w-full" />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-2">Volume: {Math.round(volume * 100)}%</label>
+          <input type="range" min="0" max="1" step="0.05" value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))} className="w-full" />
         </div>
 
         <div>

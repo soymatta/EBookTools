@@ -11,6 +11,8 @@ import {
   type BookMetadata,
 } from "@/lib/autoname-utils"
 import { setPDFMetadata } from "@/lib/pdf-utils"
+import { setEPUBMetadata } from "@/lib/epub-utils"
+import { formatSize } from "@/lib/utils"
 
 type Tab = "metadata" | "rename"
 
@@ -74,8 +76,14 @@ export default function BookManagerPage() {
           subject: metadata.description,
         })
         setSaveResult(blob)
-      } else {
-        setSaveResult(new Blob(["EPUB metadata saving not yet implemented"], { type: "text/plain" }))
+      } else if (ext === "epub") {
+        const blob = await setEPUBMetadata(selectedFile, {
+          title: metadata.title,
+          author: metadata.author,
+          description: metadata.description,
+          publisher: metadata.publisher,
+        })
+        setSaveResult(blob)
       }
     } catch (err) {
       console.error("Save metadata error:", err)
@@ -118,12 +126,6 @@ export default function BookManagerPage() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     })
-  }
-
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + " B"
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB"
   }
 
   return (

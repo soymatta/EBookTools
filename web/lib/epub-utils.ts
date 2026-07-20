@@ -134,3 +134,79 @@ async function findOPFPath(zip: JSZip): Promise<string | null> {
   const rootfile = doc.querySelector("rootfile")
   return rootfile?.getAttribute("full-path") || null
 }
+
+export async function setEPUBMetadata(
+  file: File,
+  metadata: {
+    title?: string
+    author?: string
+    description?: string
+    language?: string
+    identifier?: string
+    publisher?: string
+  }
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer()
+  const zip = await JSZip.loadAsync(arrayBuffer)
+
+  const opfPath = await findOPFPath(zip)
+  if (!opfPath) throw new Error("Could not find OPF file in EPUB")
+
+  const opfFile = zip.file(opfPath)
+  if (!opfFile) throw new Error("OPF file not found in ZIP")
+
+  const opfText = await opfFile.async("text")
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(opfText, "application/xml")
+
+  const metadataEl = doc.querySelector("metadata")
+  if (!metadataEl) throw new Error("No metadata element found in OPF")
+
+  const setMeta = (name: string, value: string) => {
+    if (!value) return
+    const existing = metadataEl.querySelector(`dc\\:${name}, ${name}`)
+    if (existing) {
+      existing.textContent = value
+    } else {
+      const el = doc.createElementNS("http://purl.org/dc/elements/1.1/", `dc:${name}`)
+      el.textContent = value
+      metadataEl.appendChild(el)
+    }
+  }
+
+  const setMetaArray = (name: string, value: string) => {
+    if (!value) return
+    const existing = metadataEl.querySelector(`dc\\:${name}, ${name}`)
+    if (existing) {
+      existing.textContent = value
+    } else {
+      const el = doc.createElementNS("http://purl.org/dc/elements/1.1/", `dc:${name}`)
+      el.textContent = value
+      metadataEl.appendChild(el)
+    }
+  }
+
+  if (metadata.title) setMeta("title", metadata.title)
+  if (metadata.author) setMetaArray("creator", metadata.author)
+  if (metadata.description) {
+    const existing = metadataEl.querySelector("dc\\:description, description")
+    if (existing) existing.textContent = metadata.description
+    else {
+      const el = doc.createElementNS("http://purl.org/dc/elements/1.1/", "dc:description")
+      el.textContent = metadata.description
+      metadataEl.appendChild(el)
+    }
+  }
+  if (metadata.language) setMetaArray("language", metadata.language)
+  if (metadata.identifier) setMeta("identifier", metadata.identifier)
+  if (metadata.publisher) setMeta("publisher", metadata.publisher)
+
+  const serializer = new XMLSerializer()
+  let updatedOpf = serializer.serializeToString(doc)
+  updatedOpf = '<?xml version="1.0" encoding="UTF-8"?>\n' + updatedOpf
+
+  zip.file(opfPath, updatedOpf)
+
+  const newZipBytes = await zip.generateAsync({ type: "uint8array" })
+  return new Blob([newZipBytes.slice().buffer as ArrayBuffer], { type: "application/epub+zip" })
+}

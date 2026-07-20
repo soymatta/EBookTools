@@ -5,6 +5,7 @@ import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
 import { compressPDF, type CompressionLevel, COMPRESSION_LEVELS } from "@/lib/pdf-utils"
 import { compressEPUB } from "@/lib/epub-utils"
+import { formatSize } from "@/lib/utils"
 
 interface ProcessedFile {
   name: string
@@ -12,12 +13,6 @@ interface ProcessedFile {
   originalSize: number
   compressedSize: number
   error?: string
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
 }
 
 export default function CompressPage() {

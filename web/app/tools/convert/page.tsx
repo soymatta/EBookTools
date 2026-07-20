@@ -3,15 +3,10 @@
 import { useState, useCallback } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
-import { epubToPDF } from "@/lib/convert-utils"
+import { epubToPDF, pdfToEPUB } from "@/lib/convert-utils"
+import { formatSize } from "@/lib/utils"
 
 type ConvertDirection = "epub-to-pdf" | "pdf-to-epub"
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
-}
 
 export default function ConvertPage() {
   const [file, setFile] = useState<File | null>(null)
@@ -47,7 +42,8 @@ export default function ConvertPage() {
         const blob = await epubToPDF(file)
         setResult(blob)
       } else {
-        setError("PDF → EPUB conversion is not yet available. EPUB → PDF works!")
+        const blob = await pdfToEPUB(file)
+        setResult(blob)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Conversion failed")
@@ -58,9 +54,9 @@ export default function ConvertPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-12">
-      <h1 className="text-3xl font-bold mb-2">🔄 EPUB → PDF</h1>
+      <h1 className="text-3xl font-bold mb-2">🔄 Convert Ebooks</h1>
       <p className="mb-8" style={{ color: "var(--text-secondary)" }}>
-        Convert EPUB ebooks to PDF format
+        Convert between EPUB and PDF formats
       </p>
 
       <FileUploader accept={[".pdf", ".epub"]} onFilesSelected={handleFileSelected} />
@@ -74,14 +70,18 @@ export default function ConvertPage() {
               <p className="font-medium">{file.name}</p>
               <p className="text-xs" style={{ color: "var(--text-secondary)" }}>{formatSize(file.size)}</p>
             </div>
+            <span className="text-sm font-medium px-3 py-1 rounded-lg" style={{ backgroundColor: "var(--bg-primary)", color: "var(--text-secondary)" }}>
+              {direction === "epub-to-pdf" ? "EPUB → PDF" : "PDF → EPUB"}
+            </span>
             <button onClick={() => { setFile(null); setResult(null); setError("") }}
               className="text-sm px-2 py-1 rounded" style={{ color: "var(--error)" }}>✕</button>
           </div>
 
           <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--bg-card)" }}>
             <p style={{ color: "var(--text-secondary)" }}>
-              Converts EPUB text content to PDF. Images and complex formatting are preserved as best as possible.
-              Output uses A4 pages with readable font sizing.
+              {direction === "epub-to-pdf"
+                ? "Converts EPUB text content to PDF. Output uses A4 pages with readable font sizing."
+                : "Extracts text from PDF and creates a valid EPUB with chapter structure and table of contents."}
             </p>
           </div>
         </div>
@@ -97,13 +97,13 @@ export default function ConvertPage() {
         <button
           onClick={handleConvert}
           disabled={processing}
-          className="mt-6 w-full py-3 rounded-lg font-medium"
+          className="mt-6 w-full py-3 rounded-lg font-medium transition-colors"
           style={{
             backgroundColor: processing ? "var(--bg-card)" : "var(--accent)",
             color: processing ? "var(--text-secondary)" : "white",
           }}
         >
-          {processing ? "Converting..." : "🔄 Convert to PDF"}
+          {processing ? "Converting..." : `🔄 Convert to ${direction === "epub-to-pdf" ? "PDF" : "EPUB"}`}
         </button>
       )}
 
@@ -111,7 +111,7 @@ export default function ConvertPage() {
         <div className="mt-6">
           <div className="p-4 rounded-lg border"
             style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}>
-            <p className="font-medium mb-3">✅ Conversion complete</p>
+            <p className="font-medium mb-3">Conversion complete</p>
             <DownloadButton data={result} filename={resultName} label="Download" />
           </div>
         </div>

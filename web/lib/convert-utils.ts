@@ -1,4 +1,4 @@
-import { PDFDocument, type PDFFont } from "pdf-lib"
+import { PDFDocument } from "pdf-lib"
 import JSZip from "jszip"
 
 export async function epubToPDF(file: File): Promise<Blob> {
@@ -7,7 +7,6 @@ export async function epubToPDF(file: File): Promise<Blob> {
 
   const pdfDoc = await PDFDocument.create()
 
-  // Extract text content from EPUB XHTML files
   const htmlFiles = Object.keys(zip.files).filter(
     (name) =>
       name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm")
@@ -19,7 +18,7 @@ export async function epubToPDF(file: File): Promise<Blob> {
 
     const text = extractTextFromHTML(content)
     if (text.trim()) {
-      const page = pdfDoc.addPage([595.28, 841.89]) // A4
+      const page = pdfDoc.addPage([595.28, 841.89])
       const font = await pdfDoc.embedFont("Helvetica")
       const fontSize = 12
       const margin = 50
@@ -53,8 +52,9 @@ function extractTextFromHTML(html: string): string {
 
 function wrapText(
   text: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  font: any,
+  font: Parameters<typeof PDFDocument.prototype.embedFont> extends never
+    ? { widthOfTextAtSize: (text: string, size: number) => number }
+    : { widthOfTextAtSize: (text: string, size: number) => number },
   fontSize: number,
   maxWidth: number
 ): string[] {
@@ -79,18 +79,14 @@ function wrapText(
 }
 
 export async function pdfToEPUB(file: File): Promise<Blob> {
-  // PDF to EPUB is complex - this is a simplified version
-  // that extracts text and creates a basic EPUB
+  const { getDocument } = await import("pdfjs-dist")
   const arrayBuffer = await file.arrayBuffer()
+  const pdf = await getDocument({ data: arrayBuffer }).promise
 
-  // For now, we'll create a placeholder
-  // Full implementation would use pdf.js to extract text
   const zip = new JSZip()
 
-  // mimetype
   zip.file("mimetype", "application/epub+zip", { compression: "STORE" })
 
-  // META-INF/container.xml
   zip.file(
     "META-INF/container.xml",
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -101,40 +97,116 @@ export async function pdfToEPUB(file: File): Promise<Blob> {
 </container>`
   )
 
-  // Basic OPF
+  const title = file.name.replace(/\.[^.]+$/, "")
+  const chapters: { id: string; title: string; href: string }[] = []
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    const pageText = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+
+    if (!pageText.trim()) continue
+
+    const chapterId = `page-${i}`
+    const chapterHref = `${chapterId}.xhtml`
+    const chapterTitle = `Page ${i}`
+
+    const paragraphs = pageText
+      .split(/\n+/)
+      .filter((p) => p.trim())
+      .map((p) => `<p>${escapeXml(p.trim())}</p>`)
+      .join("\n")
+
+    zip.file(
+      `OEBPS/${chapterHref}`,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>${escapeXml(chapterTitle)}</title>
+</head>
+<body>
+<h1>${escapeXml(chapterTitle)}</h1>
+${paragraphs}
+</body>
+</html>`
+    )
+
+    chapters.push({ id: chapterId, title: chapterTitle, href: chapterHref })
+  }
+
+  if (chapters.length === 0) {
+    const emptyId = "empty"
+    const emptyHref = "empty.xhtml"
+    zip.file(
+      `OEBPS/${emptyHref}`,
+      `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Empty</title></head>
+<body><p>No text content found in this PDF.</p></body>
+</html>`
+    )
+    chapters.push({ id: emptyId, title: "Empty", href: emptyHref })
+  }
+
+  const manifestItems = chapters
+    .map((ch) => `    <item id="${ch.id}" href="${ch.href}" media-type="application/xhtml+xml"/>`)
+    .join("\n")
+  const spineItems = chapters
+    .map((ch) => `    <itemref idref="${ch.id}"/>`)
+    .join("\n")
+  const tocItems = chapters
+    .map((ch) => `      <navPoint id="${ch.id}">
+        <navLabel><text>${escapeXml(ch.title)}</text></navLabel>
+        <content src="${ch.href}"/>
+      </navPoint>`)
+    .join("\n")
+
   zip.file(
     "OEBPS/content.opf",
     `<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Converted from PDF</dc:title>
+    <dc:title>${escapeXml(title)}</dc:title>
     <dc:language>en</dc:language>
-    <dc:identifier>converted-pdf</dc:identifier>
+    <dc:identifier id="bookid">pdf-conversion-${Date.now()}</dc:identifier>
   </metadata>
   <manifest>
-    <item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
-    <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+${manifestItems}
   </manifest>
-  <spine toc="toc">
-    <itemref idref="chapter1"/>
+  <spine toc="ncx">
+${spineItems}
   </spine>
 </package>`
   )
 
-  // Placeholder content
   zip.file(
-    "OEBPS/chapter1.xhtml",
+    "OEBPS/toc.ncx",
     `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>Chapter 1</title></head>
-<body>
-<h1>Converted from PDF</h1>
-<p>Text extraction from PDF requires pdf.js integration. This is a placeholder.</p>
-</body>
-</html>`
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="pdf-conversion-${Date.now()}"/>
+  </head>
+  <docTitle><text>${escapeXml(title)}</text></docTitle>
+  <navMap>
+${tocItems}
+  </navMap>
+</ncx>`
   )
 
   const content = await zip.generateAsync({ type: "uint8array" })
   return new Blob([content.slice().buffer as ArrayBuffer], { type: "application/epub+zip" })
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;")
 }
