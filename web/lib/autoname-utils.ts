@@ -1,4 +1,4 @@
-import JSZip from "jszip"
+import { extractEPUBMetadata } from "./epub-parser"
 
 export interface BookMetadata {
   title: string
@@ -37,8 +37,7 @@ function cleanFilenameForSearch(filename: string): string {
   let name = filename.replace(/\.[^.]+$/, "")
   name = name.replace(/[_]+/g, " ")
   name = name.replace(/\b(pdf|epub|fb2|djvu|mobi|azw3|cbz|cbr|azw)\b/gi, "")
-  name = name.replace(/\b(1080p|720p|480p|hd|cam|web|dl|bluray|dvdrip|brrip|repack|extended|uncut)\b/gi, "")
-  name = name.replace(/\b(v\d+|part\d+|vol\d+|\d+)\b/gi, "")
+  name = name.replace(/\b(v\d+|part\d+|vol\d+)\b/gi, "")
   name = name.replace(/\s+/g, " ")
   return name.trim()
 }
@@ -66,39 +65,17 @@ export async function extractMetadataFromFile(file: File): Promise<BookMetadata 
 
 async function extractFromEPUB(file: File): Promise<BookMetadata | null> {
   try {
-    const buffer = await file.arrayBuffer()
-    const zip = await JSZip.loadAsync(buffer)
-
-    const containerFile = zip.file("META-INF/container.xml")
-    if (!containerFile) return null
-
-    const containerText = await containerFile.async("text")
-    const parser = new DOMParser()
-    const containerDoc = parser.parseFromString(containerText, "application/xml")
-    const rootfile = containerDoc.querySelector("rootfile")
-    const opfPath = rootfile?.getAttribute("full-path")
-    if (!opfPath) return null
-
-    const opfFile = zip.file(opfPath)
-    if (!opfFile) return null
-
-    const opfText = await opfFile.async("text")
-    const opfDoc = parser.parseFromString(opfText, "application/xml")
-
-    const getMeta = (name: string): string => {
-      const el = opfDoc.querySelector(`metadata > dc\\:${name}, metadata > ${name}`)
-      return el?.textContent || ""
-    }
-
+    const meta = await extractEPUBMetadata(file)
+    if (!meta) return null
     return {
-      title: getMeta("title"),
-      author: getMeta("creator"),
-      year: getMeta("date")?.substring(0, 4) || "",
-      category: getMeta("subject"),
-      isbn: getMeta("identifier"),
+      title: meta.title,
+      author: meta.creator,
+      year: meta.date?.substring(0, 4) || "",
+      category: "",
+      isbn: meta.identifier,
       coverUrl: "",
-      description: getMeta("description"),
-      publisher: getMeta("publisher"),
+      description: meta.description,
+      publisher: meta.publisher,
       pageCount: "",
     }
   } catch {

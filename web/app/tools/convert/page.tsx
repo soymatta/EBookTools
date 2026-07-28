@@ -3,12 +3,13 @@
 import { useState, useCallback } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
+import ErrorBoundary from "@/components/ErrorBoundary"
 import { epubToPDF, pdfToEPUB } from "@/lib/convert-utils"
 import { formatSize } from "@/lib/utils"
 
 type ConvertDirection = "epub-to-pdf" | "pdf-to-epub"
 
-export default function ConvertPage() {
+function ConvertPageContent() {
   const [file, setFile] = useState<File | null>(null)
   const [direction, setDirection] = useState<ConvertDirection>("epub-to-pdf")
   const [processing, setProcessing] = useState(false)
@@ -117,5 +118,13 @@ export default function ConvertPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function ConvertPage() {
+  return (
+    <ErrorBoundary>
+      <ConvertPageContent />
+    </ErrorBoundary>
   )
 }

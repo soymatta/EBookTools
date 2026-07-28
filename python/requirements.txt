@@ -1,5 +1,5 @@
-pikepdf>=9.0
-ebooklib>=0.18
-fpdf2>=2.8
-PyMuPDF>=1.25
-pyttsx3>=2.90
+pikepdf>=9.0,<10
+ebooklib>=0.18,<1
+fpdf2>=2.8,<3
+PyMuPDF>=1.25,<2
+pyttsx3>=2.90,<3

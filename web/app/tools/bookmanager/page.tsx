@@ -3,6 +3,8 @@
 import { useState, useCallback } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
+import ErrorBoundary from "@/components/ErrorBoundary"
+import JSZip from "jszip"
 import {
   autoRenameBooks,
   extractMetadataFromFile,
@@ -16,7 +18,7 @@ import { formatSize } from "@/lib/utils"
 
 type Tab = "metadata" | "rename"
 
-export default function BookManagerPage() {
+function BookManagerPageContent() {
   const [tab, setTab] = useState<Tab>("rename")
   const [files, setFiles] = useState<File[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -110,22 +112,24 @@ export default function BookManagerPage() {
     return editedNames[index] || result.newName
   }
 
-  const downloadRenamed = () => {
+  const downloadRenamed = async () => {
+    const zip = new JSZip()
     results.forEach((result, i) => {
       const finalName = getFinalName(result, i)
       if (finalName === result.originalName) return
       const originalFile = files.find(f => f.name === result.originalName)
-      if (!originalFile) return
-      const blob = new Blob([originalFile], { type: originalFile.type })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = finalName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      if (originalFile) zip.file(finalName, originalFile)
     })
+    const content = await zip.generateAsync({ type: "uint8array" })
+    const blob = new Blob([content.slice().buffer as ArrayBuffer], { type: "application/zip" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "renamed-books.zip"
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -391,8 +395,8 @@ export default function BookManagerPage() {
 
               {saveResult && (
                 <div className="p-3 rounded-lg border" style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}>
-                  <p className="text-sm mb-2">✅ Metadata saved</p>
-                  <DownloadButton data={saveResult} filename={selectedFile?.name || "output"} label="Download" compact />
+                  <p className="text-sm mb-2">Metadata saved</p>
+                  <DownloadButton data={saveResult} filename={(selectedFile?.name || "output").replace(/(\.[^.]+)$/, "_metadata$1")} label="Download" compact />
                 </div>
               )}
             </div>
@@ -400,5 +404,13 @@ export default function BookManagerPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function BookManagerPage() {
+  return (
+    <ErrorBoundary>
+      <BookManagerPageContent />
+    </ErrorBoundary>
   )
 }

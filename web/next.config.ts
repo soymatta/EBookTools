@@ -25,10 +25,13 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=()",
   },
+  {
+    key: "Content-Security-Policy",
+    value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://covers.openlibrary.org https://books.google.com; connect-src 'self' https://openlibrary.org https://www.googleapis.com blob:; media-src 'self' blob:; font-src 'self' data:;",
+  },
 ]
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdfjs-dist"],
   async headers() {
     return [
       {

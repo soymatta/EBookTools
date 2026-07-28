@@ -52,9 +52,7 @@ function extractTextFromHTML(html: string): string {
 
 function wrapText(
   text: string,
-  font: Parameters<typeof PDFDocument.prototype.embedFont> extends never
-    ? { widthOfTextAtSize: (text: string, size: number) => number }
-    : { widthOfTextAtSize: (text: string, size: number) => number },
+  font: { widthOfTextAtSize: (text: string, size: number) => number },
   fontSize: number,
   maxWidth: number
 ): string[] {

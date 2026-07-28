@@ -1,6 +1,7 @@
 import JSZip from "jszip"
-import type { CompressionLevel } from "./pdf-utils"
-import { COMPRESSION_LEVELS } from "./pdf-utils"
+import type { CompressionLevel } from "./config"
+import { COMPRESSION_LEVELS } from "./config"
+import { findOPFPath } from "./epub-parser"
 
 const JUNK_FILES = /^\.(DS_Store|AppleDouble|LSOverride)|Thumbs\.db|desktop\.ini|__MACOSX/i
 
@@ -50,6 +51,12 @@ export async function compressEPUB(file: File, level: CompressionLevel = "normal
 
     if (JUNK_FILES.test(filename) || filename.startsWith(".")) {
       removedCount++
+      continue
+    }
+
+    if (filename === "mimetype") {
+      const content = await zipEntry.async("uint8array")
+      newZip.file(filename, content, { compression: "STORE" })
       continue
     }
 
@@ -121,18 +128,6 @@ export async function getEPUBMetadata(file: File) {
     publisher: getMeta("publisher"),
     date: getMeta("date"),
   }
-}
-
-async function findOPFPath(zip: JSZip): Promise<string | null> {
-  const containerFile = zip.file("META-INF/container.xml")
-  if (!containerFile) return null
-
-  const containerText = await containerFile.async("text")
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(containerText, "application/xml")
-
-  const rootfile = doc.querySelector("rootfile")
-  return rootfile?.getAttribute("full-path") || null
 }
 
 export async function setEPUBMetadata(

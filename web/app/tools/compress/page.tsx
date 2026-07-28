@@ -3,7 +3,9 @@
 import { useState, useCallback } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
-import { compressPDF, type CompressionLevel, COMPRESSION_LEVELS } from "@/lib/pdf-utils"
+import ErrorBoundary from "@/components/ErrorBoundary"
+import { compressPDF } from "@/lib/pdf-utils"
+import { type CompressionLevel, COMPRESSION_LEVELS } from "@/lib/config"
 import { compressEPUB } from "@/lib/epub-utils"
 import { formatSize } from "@/lib/utils"
 
@@ -15,7 +17,7 @@ interface ProcessedFile {
   error?: string
 }
 
-export default function CompressPage() {
+function CompressPageContent() {
   const [files, setFiles] = useState<File[]>([])
   const [compressionLevel, setCompressionLevel] = useState<CompressionLevel>("normal")
   const [processing, setProcessing] = useState(false)
@@ -98,7 +100,7 @@ export default function CompressPage() {
         <div className="mt-6 space-y-2">
           {files.map((file, i) => (
             <div
-              key={file.name + file.size}
+              key={`${file.name}-${file.size}-${i}`}
               className="flex items-center justify-between p-3 rounded-lg border"
               style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
             >
@@ -257,5 +259,13 @@ export default function CompressPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function CompressPage() {
+  return (
+    <ErrorBoundary>
+      <CompressPageContent />
+    </ErrorBoundary>
   )
 }
