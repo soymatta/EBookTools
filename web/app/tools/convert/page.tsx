@@ -81,7 +81,7 @@ function ConvertPageContent() {
           <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--bg-card)" }}>
             <p style={{ color: "var(--text-secondary)" }}>
               {direction === "epub-to-pdf"
-                ? "Converts EPUB text content to PDF. Output uses A4 pages with readable font sizing."
+                ? "Covers and notes are skipped; output uses A4 pages with a built-in Latin-1 font (books in other scripts are rejected instead of producing garbled text)."
                 : "Extracts text from PDF and creates a valid EPUB with chapter structure and table of contents."}
             </p>
           </div>

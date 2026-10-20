@@ -1,4 +1,15 @@
-import { extractEPUBMetadata } from "./epub-parser"
+/**
+ * Embedded-metadata book renaming (fully offline — no API lookups).
+ *
+ * Renames badly named files from the title/author already stored inside
+ * them (EPUB OPF, PDF docinfo). Files without usable embedded metadata keep
+ * their original name (reported, not renamed). Covers are extracted from
+ * inside the EPUB itself; never fetched from the network (see Offline rule
+ * in AGENTS.md).
+ */
+import JSZip from "jszip"
+import { extractEPUBMetadata, findOPFPath } from "./epub-parser"
+import { sanitizeFilename } from "./utils"
 
 export interface BookMetadata {
   title: string
@@ -26,22 +37,6 @@ export const RENAME_FORMATS = [
   { id: "author-title", label: "{author} - {title}", template: "{author} - {title}" },
 ]
 
-function sanitizeFilename(str: string): string {
-  return str
-    .replace(/[<>:"/\\|?*]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
-function cleanFilenameForSearch(filename: string): string {
-  let name = filename.replace(/\.[^.]+$/, "")
-  name = name.replace(/[_]+/g, " ")
-  name = name.replace(/\b(pdf|epub|fb2|djvu|mobi|azw3|cbz|cbr|azw)\b/gi, "")
-  name = name.replace(/\b(v\d+|part\d+|vol\d+)\b/gi, "")
-  name = name.replace(/\s+/g, " ")
-  return name.trim()
-}
-
 export function applyRenameFormat(template: string, metadata: BookMetadata): string {
   let result = template
   result = result.replace(/\{title\}/g, metadata.title || "Unknown Title")
@@ -53,7 +48,7 @@ export function applyRenameFormat(template: string, metadata: BookMetadata): str
 }
 
 // ============================================================
-// FILE METADATA EXTRACTION
+// FILE METADATA EXTRACTION (embedded only)
 // ============================================================
 
 export async function extractMetadataFromFile(file: File): Promise<BookMetadata | null> {
@@ -63,17 +58,49 @@ export async function extractMetadataFromFile(file: File): Promise<BookMetadata 
   return null
 }
 
+/** Cover image extracted from inside the EPUB (object URL, offline). */
+async function extractEPUBCover(file: File): Promise<string> {
+  try {
+    const buffer = await file.arrayBuffer()
+    const zip = await JSZip.loadAsync(buffer)
+    const opfPath = await findOPFPath(zip)
+    if (!opfPath) return ""
+    const opfText = await zip.file(opfPath)?.async("text")
+    if (!opfText) return ""
+    const doc = new DOMParser().parseFromString(opfText, "application/xml")
+    const opfDir = opfPath.split("/").slice(0, -1).join("/")
+
+    let coverHref: string | null = null
+    doc.querySelectorAll("manifest > item").forEach((item) => {
+      const props = (item.getAttribute("properties") || "").toLowerCase()
+      const id = (item.getAttribute("id") || "").toLowerCase()
+      if (props.includes("cover-image") || id === "cover" || id === "cover-image") {
+        coverHref = item.getAttribute("href")
+      }
+    })
+    if (!coverHref) return ""
+    const coverPath = opfDir ? `${opfDir}/${coverHref}` : coverHref
+    const entry = zip.file(coverPath)
+    if (!entry) return ""
+    const blob = await entry.async("blob")
+    return URL.createObjectURL(blob)
+  } catch {
+    return ""
+  }
+}
+
 async function extractFromEPUB(file: File): Promise<BookMetadata | null> {
   try {
     const meta = await extractEPUBMetadata(file)
     if (!meta) return null
+    const coverUrl = await extractEPUBCover(file)
     return {
       title: meta.title,
       author: meta.creator,
       year: meta.date?.substring(0, 4) || "",
-      category: "",
+      category: meta.subject || "",
       isbn: meta.identifier,
-      coverUrl: "",
+      coverUrl,
       description: meta.description,
       publisher: meta.publisher,
       pageCount: "",
@@ -109,104 +136,7 @@ async function extractFromPDF(file: File): Promise<BookMetadata | null> {
 }
 
 // ============================================================
-// API SEARCH - Open Library + Google Books
-// ============================================================
-
-export async function searchOpenLibrary(query: string): Promise<BookMetadata | null> {
-  try {
-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&fields=title,author_name,first_publish_year,isbn,subject,publisher,number_of_pages_median,cover_i&limit=1`
-    const res = await fetch(url)
-    if (!res.ok) return null
-
-    const data = await res.json()
-    if (!data.docs || data.docs.length === 0) return null
-
-    const doc = data.docs[0]
-    const title = doc.title || ""
-    const author = doc.author_name?.[0] || ""
-    if (!title) return null
-
-    const coverUrl = doc.cover_i
-      ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`
-      : ""
-
-    return {
-      title,
-      author,
-      year: doc.first_publish_year?.toString() || "",
-      category: doc.subject?.[0] || "",
-      isbn: doc.isbn?.[0] || "",
-      coverUrl,
-      description: "",
-      publisher: doc.publisher?.[0] || "",
-      pageCount: doc.number_of_pages_median?.toString() || "",
-    }
-  } catch {
-    return null
-  }
-}
-
-export async function searchGoogleBooks(query: string): Promise<BookMetadata | null> {
-  try {
-    const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=1`
-    const res = await fetch(url)
-    if (!res.ok) return null
-
-    const data = await res.json()
-    if (!data.items || data.items.length === 0) return null
-
-    const info = data.items[0].volumeInfo
-    const title = info.title || ""
-    if (!title) return null
-
-    const isbn = info.industryIdentifiers?.find(
-      (id: { type: string }) => id.type === "ISBN_13"
-    )?.identifier || info.industryIdentifiers?.find(
-      (id: { type: string }) => id.type === "ISBN_10"
-    )?.identifier || ""
-
-    return {
-      title,
-      author: info.authors?.[0] || "",
-      year: info.publishedDate?.substring(0, 4) || "",
-      category: info.categories?.[0] || "",
-      isbn,
-      coverUrl: info.imageLinks?.thumbnail || "",
-      description: info.description || "",
-      publisher: info.publisher || "",
-      pageCount: info.pageCount?.toString() || "",
-    }
-  } catch {
-    return null
-  }
-}
-
-export async function searchByISBN(isbn: string): Promise<BookMetadata | null> {
-  if (!isbn) return null
-
-  const olResult = await searchOpenLibrary(`isbn:${isbn}`)
-  if (olResult?.title) return olResult
-
-  const gbResult = await searchGoogleBooks(`isbn:${isbn}`)
-  if (gbResult?.title) return gbResult
-
-  return null
-}
-
-async function searchMetadata(query: string): Promise<BookMetadata | null> {
-  if (!query.trim()) return null
-
-  const olResult = await searchOpenLibrary(query)
-  if (olResult?.title) return olResult
-
-  const gbResult = await searchGoogleBooks(query)
-  if (gbResult?.title) return gbResult
-
-  return null
-}
-
-// ============================================================
-// AUTO RENAME
+// AUTO RENAME (embedded metadata only)
 // ============================================================
 
 export async function autoRenameBooks(
@@ -216,49 +146,19 @@ export async function autoRenameBooks(
   const results: RenameResult[] = []
 
   for (const file of files) {
-    const fileMetadata = await extractMetadataFromFile(file)
-    const filenameQuery = cleanFilenameForSearch(file.name)
-
-    let metadata: BookMetadata | null = null
-
-    // 1. If file has metadata, search API with it
-    if (fileMetadata?.title) {
-      const apiQuery = fileMetadata.author
-        ? `${fileMetadata.title} ${fileMetadata.author}`
-        : fileMetadata.title
-      metadata = await searchMetadata(apiQuery)
-    }
-
-    // 2. If no result, search with cleaned filename
-    if (!metadata && filenameQuery) {
-      metadata = await searchMetadata(filenameQuery)
-    }
-
-    // 3. Try ISBN if found in filename
-    if (!metadata) {
-      const isbnMatch = filenameQuery.match(/\b(\d{10,13})\b/)
-      if (isbnMatch) {
-        metadata = await searchByISBN(isbnMatch[1])
-      }
-    }
-
-    // 4. Fallback to file metadata
-    if (!metadata && fileMetadata) {
-      metadata = fileMetadata
-    }
+    const metadata = await extractMetadataFromFile(file)
 
     const ext = "." + file.name.split(".").pop()?.toLowerCase()
-    let newName = ""
+    let newName: string
+    let confidence: number
 
     if (metadata?.title || metadata?.author) {
-      newName = applyRenameFormat(renameFormat, metadata) + ext
+      newName = applyRenameFormat(renameFormat, metadata as BookMetadata) + ext
+      confidence = metadata.title ? 0.9 : 0.6
     } else {
       newName = file.name
+      confidence = 0.2
     }
-
-    const confidence = metadata?.title
-      ? (fileMetadata?.title ? 0.95 : 0.7)
-      : 0.2
 
     results.push({
       originalName: file.name,

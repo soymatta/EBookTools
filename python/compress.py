@@ -10,16 +10,10 @@ try:
 except ImportError:
     pikepdf = None
 
-try:
-    import ebooklib
-    from ebooklib import epub
-except ImportError:
-    ebooklib = None
-
 COMPRESSION_LEVELS = {
-    "light": {"label": "Light", "description": "Fastest. Removes duplicate objects. ~5-10% smaller.", "zip_level": 1, "objects_per_tick": 100},
-    "normal": {"label": "Normal", "description": "Balanced. Rebuilds object streams. ~15-30% smaller.", "zip_level": 6, "objects_per_tick": 50},
-    "strong": {"label": "Strong", "description": "Maximum compression. Slowest. ~20-40% smaller.", "zip_level": 9, "objects_per_tick": 10},
+    "light": {"label": "Light", "description": "Fastest. Removes duplicate objects. ~5-10% smaller.", "zip_level": 1},
+    "normal": {"label": "Normal", "description": "Balanced. Rebuilds object streams. ~15-30% smaller.", "zip_level": 6},
+    "strong": {"label": "Strong", "description": "Maximum compression. Slowest. ~20-40% smaller.", "zip_level": 9},
 }
 
 
@@ -31,8 +25,6 @@ def compress_pdf(input_path: str, output_path: str = None, level: str = "normal"
     if output_path is None:
         base, ext = os.path.splitext(input_path)
         output_path = f"{base}_compressed{ext}"
-
-    config = COMPRESSION_LEVELS.get(level, COMPRESSION_LEVELS["normal"])
 
     with pikepdf.open(input_path) as pdf:
         if level == "light":

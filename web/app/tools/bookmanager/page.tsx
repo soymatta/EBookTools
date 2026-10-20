@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import FileUploader from "@/components/FileUploader"
 import DownloadButton from "@/components/DownloadButton"
 import ErrorBoundary from "@/components/ErrorBoundary"
@@ -26,6 +26,7 @@ function BookManagerPageContent() {
   const [metadataLoaded, setMetadataLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveResult, setSaveResult] = useState<Blob | null>(null)
+  const [saveError, setSaveError] = useState("")
 
   const [format, setFormat] = useState(RENAME_FORMATS[0].template)
   const [customFormat, setCustomFormat] = useState("")
@@ -43,8 +44,26 @@ function BookManagerPageContent() {
       setMetadataLoaded(false)
       setMetadata(null)
       setSaveResult(null)
+      setSaveError("")
     }
   }, [])
+
+  // Embedded covers become object URLs; release them when the list is replaced
+  // or the component unmounts so repeated renames don't leak memory.
+  useEffect(() => {
+    return () => {
+      results.forEach((r) => {
+        if (r.metadata?.coverUrl) URL.revokeObjectURL(r.metadata.coverUrl)
+      })
+    }
+  }, [results])
+
+  useEffect(() => {
+    const url = metadata?.coverUrl
+    return () => {
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [metadata])
 
   const loadMetadata = async (file: File) => {
     setSelectedFile(file)
@@ -69,13 +88,23 @@ function BookManagerPageContent() {
     if (!selectedFile || !metadata) return
     setSaving(true)
     setSaveResult(null)
+    setSaveError("")
     try {
       const ext = selectedFile.name.split(".").pop()?.toLowerCase()
+      const year = Number.parseInt(metadata.year, 10)
+      const creationDate = Number.isFinite(year) && year > 1000 ? new Date(Date.UTC(year, 0, 1)) : undefined
+
       if (ext === "pdf") {
+        // PDF docinfo has no ISBN/category slots: ISBN and category go to
+        // /Keywords, and the year to the creation date. Cover and page count
+        // are read-only (rewriting them needs a PDF object-level edit).
+        const keywords = [metadata.category, metadata.isbn].filter(Boolean).join(", ")
         const blob = await setPDFMetadata(selectedFile, {
           title: metadata.title,
           author: metadata.author,
           subject: metadata.description,
+          keywords,
+          creationDate,
         })
         setSaveResult(blob)
       } else if (ext === "epub") {
@@ -84,11 +113,16 @@ function BookManagerPageContent() {
           author: metadata.author,
           description: metadata.description,
           publisher: metadata.publisher,
+          identifier: metadata.isbn,
+          date: metadata.year,
+          subject: metadata.category,
         })
         setSaveResult(blob)
+      } else {
+        setSaveError("Unsupported file type. Use a PDF or EPUB file.")
       }
     } catch (err) {
-      console.error("Save metadata error:", err)
+      setSaveError(err instanceof Error ? err.message : "Could not save metadata")
     } finally {
       setSaving(false)
     }
@@ -136,7 +170,7 @@ function BookManagerPageContent() {
     <div className="max-w-3xl mx-auto px-6 py-12">
       <h1 className="text-3xl font-bold mb-2">📝 Book Manager</h1>
       <p className="mb-6" style={{ color: "var(--text-secondary)" }}>
-        Edit metadata, rename books with API lookup
+        Edit metadata, rename books from embedded metadata (fully offline)
       </p>
 
       <div className="flex gap-1 mb-6 p-1 rounded-lg" style={{ backgroundColor: "var(--bg-secondary)" }}>
@@ -248,7 +282,7 @@ function BookManagerPageContent() {
               <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--bg-card)" }}>
                 <div className="h-full rounded-full animate-pulse" style={{ backgroundColor: "var(--accent)", width: "60%" }} />
               </div>
-              <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>Searching APIs...</p>
+              <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>Reading embedded metadata...</p>
             </div>
           )}
 
@@ -340,24 +374,35 @@ function BookManagerPageContent() {
                   { key: "isbn", label: "ISBN" },
                   { key: "publisher", label: "Publisher" },
                   { key: "category", label: "Category" },
-                  { key: "pageCount", label: "Pages" },
-                ].map(field => (
+                  { key: "pageCount", label: "Pages (read-only)" },
+                ].map(field => {
+                  const readOnly = field.key === "pageCount"
+                  return (
                   <div key={field.key}>
                     <label className="block text-xs font-medium mb-1">{field.label}</label>
                     <input
                       type="text"
                       value={metadata[field.key as keyof BookMetadata] || ""}
+                      readOnly={readOnly}
+                      disabled={readOnly}
                       onChange={e => setMetadata(prev => prev ? { ...prev, [field.key]: e.target.value } : prev)}
                       className="w-full px-3 py-2 rounded-lg border text-sm"
                       style={{
                         backgroundColor: "var(--bg-card)",
                         borderColor: "var(--border)",
-                        color: "var(--text-primary)",
+                        color: readOnly ? "var(--text-secondary)" : "var(--text-primary)",
+                        opacity: readOnly ? 0.7 : 1,
                       }}
                     />
                   </div>
-                ))}
+                  )
+                })}
               </div>
+
+              <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                Saved per format — EPUB: title, author, year, ISBN, publisher, category, description.
+                PDF: title, author, year (creation date), category + ISBN (keywords), description.
+              </p>
 
               <div>
                 <label className="block text-xs font-medium mb-1">Description</label>
@@ -376,8 +421,17 @@ function BookManagerPageContent() {
 
               {metadata.coverUrl && (
                 <div>
-                  <label className="block text-xs font-medium mb-1">Cover</label>
+                  <label className="block text-xs font-medium mb-1">Cover (read-only)</label>
                   <img src={metadata.coverUrl} alt="Cover" className="h-28 rounded" style={{ backgroundColor: "var(--bg-primary)" }} />
+                  <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+                    Replacing the cover image changes the OPF manifest and is not supported yet.
+                  </p>
+                </div>
+              )}
+
+              {saveError && (
+                <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: "rgba(239,68,68,0.1)", color: "var(--error)" }}>
+                  {saveError}
                 </div>
               )}
 

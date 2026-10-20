@@ -162,8 +162,8 @@ function CompressPageContent() {
 
           <div className="p-3 rounded-lg text-xs" style={{ backgroundColor: "var(--bg-card)" }}>
             <p style={{ color: "var(--text-secondary)" }}>
-              <strong>EPUB:</strong> Removes junk files (.DS_Store, Thumbs.db), optimizes images, repacks with better compression.
-              {" "}<strong>PDF:</strong> Rebuilds object streams and removes duplicate objects. Both are lossless — no quality loss.
+              <strong>EPUB:</strong> Removes junk files (.DS_Store, Thumbs.db), trims oversized JPEGs (Strong level only) and repacks with better compression.
+              {" "}<strong>PDF:</strong> Rebuilds object streams and removes duplicate objects — lossless. No image is re-encoded under a wrong media type.
             </p>
           </div>
         </div>
@@ -211,14 +211,14 @@ function CompressPageContent() {
           </div>
 
           <div className="space-y-3">
-            {successfulResults.map((r) => {
+            {successfulResults.map((r, i) => {
               const pct = Math.round((1 - r.compressedSize / r.originalSize) * 100)
               const isSmaller = r.compressedSize < r.originalSize
               const isSame = Math.abs(r.compressedSize - r.originalSize) < 1024
 
               return (
                 <div
-                  key={r.name}
+                  key={`${r.name}-${i}`}
                   className="p-4 rounded-lg border"
                   style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--border)" }}
                 >
@@ -243,9 +243,9 @@ function CompressPageContent() {
               )
             })}
 
-            {failedResults.map((r) => (
+            {failedResults.map((r, i) => (
               <div
-                key={r.name}
+                key={`${r.name}-error-${i}`}
                 className="p-4 rounded-lg border"
                 style={{ backgroundColor: "var(--bg-card)", borderColor: "var(--error)" }}
               >

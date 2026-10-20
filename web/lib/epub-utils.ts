@@ -3,13 +3,15 @@ import type { CompressionLevel } from "./config"
 import { COMPRESSION_LEVELS } from "./config"
 import { findOPFPath } from "./epub-parser"
 
-const JUNK_FILES = /^\.(DS_Store|AppleDouble|LSOverride)|Thumbs\.db|desktop\.ini|__MACOSX/i
+const JUNK_FILES = /(^|\/)(?:\.(?:DS_Store|AppleDouble|LSOverride)|Thumbs\.db|desktop\.ini|__MACOSX)/i
 
-const BINARY_EXT = /\.(jpg|jpeg|png|gif|webp|svg|woff2?|ttf|otf|mp[34]|ogg|wav)$/i
-const IMAGE_EXT = /\.(jpg|jpeg|png|gif|webp)$/i
+// Only JPEG can be re-encoded to JPEG without lying about the media type.
+// PNG/GIF/SVG/WebP keep their bytes: the OPF declares the original mimetype
+// and a JPEG payload under a .png entry renders as a broken image.
+const IMAGE_EXT = /\.jpe?g$/i
 
 async function optimizeImage(data: Uint8Array, filename: string): Promise<Uint8Array> {
-  if (typeof ImageData === "undefined") return data
+  if (typeof document === "undefined") return data
   if (!IMAGE_EXT.test(filename)) return data
 
   try {
@@ -17,8 +19,9 @@ async function optimizeImage(data: Uint8Array, filename: string): Promise<Uint8A
     const bmp = await createImageBitmap(blob)
 
     const canvas = document.createElement("canvas")
-    const maxDim = 1200
+    const maxDim = 1400
     const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height))
+    if (scale >= 1) return data // already small: re-encoding would only lose quality
     canvas.width = Math.round(bmp.width * scale)
     canvas.height = Math.round(bmp.height * scale)
 
@@ -26,10 +29,11 @@ async function optimizeImage(data: Uint8Array, filename: string): Promise<Uint8A
     if (!ctx) return data
 
     ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height)
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.75)
-    const res = await fetch(dataUrl)
-    const buf = await res.arrayBuffer()
-    return new Uint8Array(buf)
+    const encoded = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.85)
+    )
+    if (!encoded) return data
+    return new Uint8Array(await encoded.arrayBuffer())
   } catch {
     return data
   }
@@ -49,7 +53,9 @@ export async function compressEPUB(file: File, level: CompressionLevel = "normal
     const zipEntry = zip.files[filename]
     if (zipEntry.dir) continue
 
-    if (JUNK_FILES.test(filename) || filename.startsWith(".")) {
+    const isDotSegment = filename.split("/").some((seg) => seg.startsWith(".") && seg.length > 1)
+
+    if (JUNK_FILES.test(filename) || isDotSegment) {
       removedCount++
       continue
     }
@@ -72,7 +78,7 @@ export async function compressEPUB(file: File, level: CompressionLevel = "normal
 
     let content = await zipEntry.async("uint8array")
 
-    if (level !== "light" && BINARY_EXT.test(filename)) {
+    if (level === "strong" && IMAGE_EXT.test(filename)) {
       const optimized = await optimizeImage(content, filename)
       if (optimized.length < content.length) {
         content = optimized
@@ -99,37 +105,6 @@ export async function compressEPUB(file: File, level: CompressionLevel = "normal
   return new Blob([compressed.slice().buffer as ArrayBuffer], { type: "application/epub+zip" })
 }
 
-export async function getEPUBMetadata(file: File) {
-  const arrayBuffer = await file.arrayBuffer()
-  const zip = await JSZip.loadAsync(arrayBuffer)
-
-  const opfPath = await findOPFPath(zip)
-  if (!opfPath) return null
-
-  const opfContent = await zip.file(opfPath)?.async("text")
-  if (!opfContent) return null
-
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(opfContent, "application/xml")
-
-  const getMeta = (name: string): string => {
-    const el =
-      doc.querySelector(`metadata > dc\\:${name}, metadata > ${name}`) ||
-      doc.querySelector(`metadata > [name="${name}"]`)
-    return el?.textContent || ""
-  }
-
-  return {
-    title: getMeta("title"),
-    creator: getMeta("creator"),
-    language: getMeta("language"),
-    identifier: getMeta("identifier"),
-    description: getMeta("description"),
-    publisher: getMeta("publisher"),
-    date: getMeta("date"),
-  }
-}
-
 export async function setEPUBMetadata(
   file: File,
   metadata: {
@@ -139,6 +114,8 @@ export async function setEPUBMetadata(
     language?: string
     identifier?: string
     publisher?: string
+    date?: string
+    subject?: string
   }
 ): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer()
@@ -169,32 +146,14 @@ export async function setEPUBMetadata(
     }
   }
 
-  const setMetaArray = (name: string, value: string) => {
-    if (!value) return
-    const existing = metadataEl.querySelector(`dc\\:${name}, ${name}`)
-    if (existing) {
-      existing.textContent = value
-    } else {
-      const el = doc.createElementNS("http://purl.org/dc/elements/1.1/", `dc:${name}`)
-      el.textContent = value
-      metadataEl.appendChild(el)
-    }
-  }
-
   if (metadata.title) setMeta("title", metadata.title)
-  if (metadata.author) setMetaArray("creator", metadata.author)
-  if (metadata.description) {
-    const existing = metadataEl.querySelector("dc\\:description, description")
-    if (existing) existing.textContent = metadata.description
-    else {
-      const el = doc.createElementNS("http://purl.org/dc/elements/1.1/", "dc:description")
-      el.textContent = metadata.description
-      metadataEl.appendChild(el)
-    }
-  }
-  if (metadata.language) setMetaArray("language", metadata.language)
+  if (metadata.author) setMeta("creator", metadata.author)
+  if (metadata.description) setMeta("description", metadata.description)
+  if (metadata.language) setMeta("language", metadata.language)
   if (metadata.identifier) setMeta("identifier", metadata.identifier)
   if (metadata.publisher) setMeta("publisher", metadata.publisher)
+  if (metadata.date) setMeta("date", metadata.date)
+  if (metadata.subject) setMeta("subject", metadata.subject)
 
   const serializer = new XMLSerializer()
   let updatedOpf = serializer.serializeToString(doc)

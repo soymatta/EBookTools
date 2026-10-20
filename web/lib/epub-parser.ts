@@ -1,4 +1,5 @@
 import JSZip from "jszip"
+import { htmlToCleanText } from "./tts-text"
 
 export interface EPUBChapter {
   id: string
@@ -36,11 +37,12 @@ export async function getEPUBChapters(file: File): Promise<EPUBChapter[]> {
   const opfDir = opfPath.split("/").slice(0, -1).join("/")
 
   const spineItems = opfDoc.querySelectorAll("spine > itemref")
-  const manifestMap = new Map<string, string>()
+  const manifestMap = new Map<string, { href: string; nav: boolean }>()
   opfDoc.querySelectorAll("manifest > item").forEach(item => {
     const id = item.getAttribute("id")
     const href = item.getAttribute("href")
-    if (id && href) manifestMap.set(id, href)
+    const props = (item.getAttribute("properties") || "").toLowerCase()
+    if (id && href) manifestMap.set(id, { href, nav: props.includes("nav") })
   })
 
   const chapters: EPUBChapter[] = []
@@ -50,22 +52,30 @@ export async function getEPUBChapters(file: File): Promise<EPUBChapter[]> {
     const idref = spineItem.getAttribute("idref")
     if (!idref) continue
 
-    const href = manifestMap.get(idref)
-    if (!href) continue
+    const entry = manifestMap.get(idref)
+    if (!entry || entry.nav) continue
+    // Extra guard: EPUB2 NCX / toc documents that slipped into the spine.
+    // Matching whole title-like ids only ("nav", "toc", "toc-1"), so a real
+    // chapter id such as "tocqueville" is not dropped.
+    if (/^(nav|ncx|toc)([-_.].*)?$/i.test(idref) && index > 0) continue
 
-    const filePath = opfDir ? `${opfDir}/${href}` : href
+    const filePath = opfDir ? `${opfDir}/${entry.href}` : entry.href
     const contentFile = zip.file(filePath)
     if (!contentFile) continue
 
     const html = await contentFile.async("text")
     const htmlDoc = parser.parseFromString(html, "text/html")
-    const text = htmlDoc.body?.textContent || ""
+    // Canonical clean: drops nav/header/footer/figures/tables and
+    // epub:type sections (footnotes, page-list, landmarks) before narrating.
+    const text = htmlToCleanText(html)
 
     if (text.trim()) {
-      const title = htmlDoc.querySelector("title")?.textContent || `Chapter ${index + 1}`
+      const heading = htmlDoc.querySelector("h1, h2, h3")?.textContent?.trim()
+      const titleTag = htmlDoc.querySelector("title")?.textContent?.trim()
+      const title = heading || titleTag || `Chapter ${index + 1}`
       chapters.push({
         id: idref,
-        title,
+        title: title.slice(0, 120),
         href: filePath,
         text: text.trim(),
       })
@@ -102,10 +112,6 @@ export async function extractEPUBMetadata(file: File) {
     description: getMeta("description"),
     publisher: getMeta("publisher"),
     date: getMeta("date"),
+    subject: getMeta("subject"),
   }
-}
-
-export async function extractEPUBText(file: File): Promise<string> {
-  const chapters = await getEPUBChapters(file)
-  return chapters.map(ch => ch.text).join("\n\n")
 }

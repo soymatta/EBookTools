@@ -1,59 +1,14 @@
-"""Rename badly named ebook files using metadata from free APIs."""
+"""Rename badly named ebook files using embedded metadata (fully offline).
+
+Uses only the title/author already stored inside the EPUB/PDF — no API
+lookups, no network. Files without usable embedded metadata keep their
+original name (reported, not renamed).
+"""
 
 import os
-import json
-import urllib.request
-import urllib.parse
 from pathlib import Path
 
 from metadata import get_metadata
-
-
-def search_openlibrary(query: str) -> dict:
-    """Search Open Library for book metadata. No API key required."""
-    url = f"https://openlibrary.org/search.json?q={urllib.parse.quote(query)}&fields=title,author_name,first_publish_year,isbn,subject&limit=1"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "EBookTools/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("docs"):
-                doc = data["docs"][0]
-                return {
-                    "title": doc.get("title", ""),
-                    "author": doc.get("author_name", [""])[0] if doc.get("author_name") else "",
-                    "year": str(doc.get("first_publish_year", "")),
-                    "category": doc.get("subject", [""])[0] if doc.get("subject") else "",
-                    "isbn": doc.get("isbn", [""])[0] if doc.get("isbn") else "",
-                }
-    except Exception as e:
-        print(f"  Open Library search failed: {e}")
-    return {}
-
-
-def search_google_books(query: str) -> dict:
-    """Search Google Books API for book metadata. No API key for basic search."""
-    url = f"https://www.googleapis.com/books/v1/volumes?q={urllib.parse.quote(query)}&maxResults=1"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "EBookTools/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            if data.get("items"):
-                info = data["items"][0]["volumeInfo"]
-                isbn = ""
-                for identifier in info.get("industryIdentifiers", []):
-                    if identifier["type"] == "ISBN_13":
-                        isbn = identifier["identifier"]
-                        break
-                return {
-                    "title": info.get("title", ""),
-                    "author": info.get("authors", [""])[0] if info.get("authors") else "",
-                    "year": info.get("publishedDate", "")[:4],
-                    "category": info.get("categories", [""])[0] if info.get("categories") else "",
-                    "isbn": isbn,
-                }
-    except Exception as e:
-        print(f"  Google Books search failed: {e}")
-    return {}
 
 
 def apply_rename_format(template: str, metadata: dict) -> str:
@@ -69,32 +24,52 @@ def apply_rename_format(template: str, metadata: dict) -> str:
     return result.strip()
 
 
+def _embedded_lookup(filepath: str) -> dict:
+    """Read whatever metadata the file already carries."""
+    try:
+        file_meta = get_metadata(filepath)
+    except Exception as e:
+        print(f"  Could not read metadata: {e}")
+        return {}
+
+    meta = {}
+    title = (file_meta.get("title") or "").strip()
+    author = (file_meta.get("author") or "").strip()
+    if title:
+        meta["title"] = title
+    if author:
+        meta["author"] = author
+    for key in ("year", "date"):
+        value = (file_meta.get(key) or "").strip()
+        if value:
+            meta["year"] = value[:4]
+            break
+    for key in ("category", "subject"):
+        value = (file_meta.get(key) or "").strip()
+        if value:
+            meta["category"] = value
+            break
+    isbn = (file_meta.get("identifier") or file_meta.get("isbn") or "").strip()
+    if isbn:
+        meta["isbn"] = isbn
+    return meta
+
+
 def auto_rename(file_list: list, rename_format: str = "{title} - {author}") -> list:
-    """Look up metadata and rename badly named books."""
+    """Rename books from their embedded metadata. Returns result dicts."""
     results = []
 
     for i, filepath in enumerate(file_list, 1):
         filename = os.path.basename(filepath)
         print(f"[{i}/{len(file_list)}] Processing: {filename}")
 
-        file_meta = get_metadata(filepath)
-        query = " ".join(filter(None, [file_meta.get("title", ""), file_meta.get("author", "")]))
-
-        if not query.strip():
-            base = Path(filepath).stem
-            query = base.replace("_", " ").replace("-", " ")
-
-        print(f"  Searching: {query}")
-        meta = search_openlibrary(query)
-        if not meta.get("title"):
-            meta = search_google_books(query)
-
+        meta = _embedded_lookup(filepath)
         ext = Path(filepath).suffix.lower()
 
         if meta.get("title") or meta.get("author"):
             new_name = apply_rename_format(rename_format, meta) + ext
         else:
-            print(f"  No metadata found, keeping original name")
+            print("  No embedded metadata found, keeping original name")
             new_name = filename
 
         old_path = filepath

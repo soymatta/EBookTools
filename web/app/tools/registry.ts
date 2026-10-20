@@ -35,7 +35,7 @@ export const tools: Tool[] = [
   {
     id: "bookmanager",
     name: "Book Manager",
-    description: "Edit metadata, rename books using API lookup from Open Library and Google Books",
+    description: "Edit metadata, rename books from embedded metadata (fully offline)",
     icon: "\uD83D\uDCDD",
     href: "/tools/bookmanager",
     accepts: [".pdf", ".epub"],

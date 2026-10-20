@@ -88,34 +88,67 @@ Every page MUST follow this style. Do not deviate.
 
 ## AutoName (book rename tool)
 
-Renames badly named ebook files using metadata fetched from free APIs.
+Renames badly named ebook files using metadata already embedded in the file.
+Fully offline — no API lookups (see Offline rule).
 
 ### Behavior
 1. User uploads one or more books with bad filenames (e.g., `document(3).epub`, `book_final_v2.pdf`)
-2. App extracts available metadata from inside the file (title, author from EPUB/PDF metadata)
-3. If metadata is empty or incomplete, queries **Open Library Search API** (`https://openlibrary.org/search.json?q={query}`) — no API key required
-4. Falls back to **Google Books API** (`https://www.googleapis.com/books/v1/volumes?q={query}`) if Open Library returns nothing — also no API key required for basic search
-5. User picks a rename format before confirming:
+2. App extracts title/author/year/category/isbn from inside the file (EPUB OPF, PDF docinfo)
+3. Files without usable embedded metadata keep their original name (reported, never guessed)
+4. User picks a rename format before confirming:
    - `{title} - {author}` (default)
    - `{title} - {author} ({year})`
    - `{title} - {author} - {category}`
    - `{author} - {title}`
    - Custom: user writes their own template with `{title}`, `{author}`, `{year}`, `{category}`, `{isbn}`
-6. Preview shows old name → new name for each file before applying
-7. User confirms, downloads renamed files (client-side, no server)
+5. Preview shows old name → new name for each file before applying
+6. User confirms, downloads renamed files (client-side, no server)
 
-### API details
-- **Open Library**: `https://openlibrary.org/search.json?q={title}+{author}&fields=title,author_name,first_publish_year,isbn,subject` — returns `docs[]` with `title`, `author_name[]`, `first_publish_year`, `subject[]`, `isbn[]`
-- **Google Books**: `https://www.googleapis.com/books/v1/volumes?q={title}+{author}` — returns `items[]` with `volumeInfo.title`, `volumeInfo.authors[]`, `volumeInfo.publishedDate`, `volumeInfo.categories[]`, `volumeInfo.industryIdentifiers[]`
-
-### Files to create
+### Current files (already implemented — keep in sync on both sides)
 - `web/app/tools/bookmanager/page.tsx` — combined metadata + rename tool
-- `web/lib/autoname-utils.ts` — API fetch + rename logic
+- `web/lib/autoname-utils.ts` — embedded-metadata rename logic (no network)
 - `web/lib/pdf-utils.ts` — PDF compress + metadata get/set
-- `web/lib/epub-utils.ts` — EPUB compress + metadata get
+- `web/lib/epub-utils.ts` — EPUB compress + metadata set (metadata *reading* lives in `epub-parser.ts`, the single canonical reader)
+- `web/lib/epub-parser.ts` — EPUB spine-order chapters + metadata (skips nav docs, prefers h1 titles)
+- `web/lib/tts-text.ts` — clean-text pipeline for TTS (mirror of `python/_html_extractor.py`)
+- `web/lib/neural-tts.ts` — neural TTS (MMS EN+ES) + WAV encoder (mirror pattern of `python/_html_extractor.py` chunking)
+- `web/public/ort/` — self-hosted onnxruntime WASM for neural TTS (see Key gotchas)
 - `web/lib/convert-utils.ts` — EPUB → PDF conversion
-- Add entry to `web/app/tools/registry.ts`
-- Python equivalent in `ebook_tools.py`
+- Registry entry in `web/app/tools/registry.ts` + Python equivalents in `python/`
+
+## Offline rule (hard)
+
+Absolutely every feature must work offline. No exceptions:
+
+- No external servers, no APIs, no API keys, no analytics, no CDN assets at
+  runtime (fonts, scripts, styles — everything vendored via npm).
+- The single allowed exception: the neural TTS model weights (Meta MMS
+  English + Spanish) download once from Hugging Face on first use and persist
+  in the browser Cache API — after that they work offline. The UI must say so
+  on the Neural panel, and every load failure must show the real error, not a
+  generic message.
+- Python ships zero network code: `urllib` is used nowhere for remote calls.
+  AutoName renames from embedded file metadata only.
+- Never add a `fetch()`/`XMLHttpRequest` to an external origin, a new npm
+  dep that phones home, or an "optional cloud fallback". If a feature cannot
+  work offline, it does not ship.
+
+## TTS engines (local + in-browser neural)
+
+- **Python** (`python/tts.py`): local synthesis via pyttsx3 + OS voices only.
+  `--voice` is a local voice index. No network, no new pip deps.
+- **Web** (`web/app/tools/tts/page.tsx`, client in `web/lib/neural-tts.ts`): engine tabs
+  "Browser voices" (Web Speech API, old screen-share recording fallback for downloads) vs
+  "Neural (in-browser)" (zero-install: Meta MMS voices `Xenova/mms-tts-eng` + `Xenova/mms-tts-spa`
+  via `@huggingface/transformers` text-to-audio pipeline, wasm; each voice downloads once then
+  cached — see Offline rule). Synthesize per chapter/chunk (VITS likes ≤400 chars), concat
+  Float32 samples → own WAV encoder in `neural-tts.ts`; import `@huggingface/transformers`
+  dynamically, never at module top level — client-only. The neural engine ignores speed
+  (VITS has none): the speed slider shows for browser voices only.
+- **Clean text first**: every string fed to any TTS engine must go through
+  `clean_text_for_tts` (Python) / `cleanTextForTTS` (web). Keep both implementations
+  in sync — same rules: skip nav/header/footer, drop URLs + page numbers, join
+  hyphen-breaks, chunk at sentence boundaries.
 
 ## Key gotchas
 
@@ -124,3 +157,4 @@ Renames badly named ebook files using metadata fetched from free APIs.
 - **No test framework**: Neither Python nor web has tests configured. Verify manually via `npm run build` (web) and `python ebook_tools.py --help` (Python).
 - **Web is client-side only**: All processing (PDF, EPUB, TTS) runs in the browser. No API routes, no server-side processing. Files never leave the user's machine.
 - **Tailwind v4**: Uses `@tailwindcss/postcss` plugin, not the v3 `tailwindcss` PostCSS plugin. Config is in `web/postcss.config.mjs`.
+- **Neural TTS WASM is self-hosted**: `@huggingface/transformers` otherwise loads the onnxruntime WASM factory from `cdn.jsdelivr.net`, which the CSP + Offline rule forbid. `web/lib/neural-tts.ts` points `env.backends.onnx.wasm.wasmPaths` at `public/ort/ort-wasm-simd-threaded.asyncify.{mjs,wasm}` (copied from the installed `onnxruntime-web` dist — versions MUST match). The CSP (`web/next.config.ts`) needs `blob:` in `script-src` (onnxruntime wraps the factory in a blob worker) and `https://*.hf.co` in `connect-src` (HF model downloads redirect to the HF CDN, e.g. `us.aws.cdn.hf.co`). Changing the model or the env breaks the app with a generic "Failed fetch" — check the browser console for the real CSP/host cause.

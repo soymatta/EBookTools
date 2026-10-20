@@ -39,6 +39,7 @@ export async function setPDFMetadata(
     author?: string
     subject?: string
     keywords?: string
+    creationDate?: Date
   }
 ): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer()
@@ -47,7 +48,11 @@ export async function setPDFMetadata(
   if (metadata.title) pdfDoc.setTitle(metadata.title)
   if (metadata.author) pdfDoc.setAuthor(metadata.author)
   if (metadata.subject) pdfDoc.setSubject(metadata.subject)
-  if (metadata.keywords) pdfDoc.setKeywords(metadata.keywords.split(","))
+  if (metadata.keywords) pdfDoc.setKeywords(metadata.keywords.split(",").map(k => k.trim()).filter(Boolean))
+  if (metadata.creationDate) {
+    pdfDoc.setCreationDate(metadata.creationDate)
+    pdfDoc.setModificationDate(metadata.creationDate)
+  }
 
   const bytes = await pdfDoc.save()
   return new Blob([bytes.slice().buffer as ArrayBuffer], { type: "application/pdf" })

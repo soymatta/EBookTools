@@ -3,7 +3,7 @@ import nextPlugin from "@next/eslint-plugin-next"
 
 export default tseslint.config(
   {
-    ignores: ["node_modules/", ".next/", "dist/", "next-env.d.ts"],
+    ignores: ["node_modules/", ".next/", "dist/", "next-env.d.ts", "public/"],
   },
   ...tseslint.configs.recommended,
   {

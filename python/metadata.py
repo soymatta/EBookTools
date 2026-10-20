@@ -67,6 +67,7 @@ def get_epub_metadata(filepath: str) -> dict:
         "description": get_meta("description"),
         "publisher": get_meta("publisher"),
         "date": get_meta("date"),
+        "subject": get_meta("subject"),
     }
 
 
@@ -121,19 +122,27 @@ def set_epub_metadata(filepath: str, metadata: dict, output_path: str = None) ->
 
     book = epub.read_epub(filepath)
 
+    # ebooklib stores metadata as a dict and exposes get_metadata/set_unique_metadata
+    # on the book itself; the old book.metadata.get_metadata("DC") call (one arg)
+    # raised TypeError as soon as a description was present.
     if metadata.get("title"):
-        book.set_title(metadata["title"])
+        book.title = metadata["title"]
+        book.set_unique_metadata("DC", "title", metadata["title"])
     if metadata.get("author"):
-        book.add_author(metadata["author"])
+        book.set_unique_metadata("DC", "creator", metadata["author"])
     if metadata.get("language"):
-        book.set_language(metadata["language"])
+        book.language = metadata["language"]
+        book.set_unique_metadata("DC", "language", metadata["language"])
     if metadata.get("identifier"):
         book.set_identifier(metadata["identifier"])
+    if metadata.get("publisher"):
+        book.set_unique_metadata("DC", "publisher", metadata["publisher"])
+    if metadata.get("date"):
+        book.set_unique_metadata("DC", "date", metadata["date"])
+    if metadata.get("subject"):
+        book.set_unique_metadata("DC", "subject", metadata["subject"])
     if metadata.get("description"):
-        existing_descs = [(ns, key, val) for ns, key, val in book.metadata.get_metadata("DC") if key == "description"]
-        for ns, key, val in existing_descs:
-            book.metadata.remove_metadata("DC", key)
-        book.add_metadata("DC", "description", metadata["description"])
+        book.set_unique_metadata("DC", "description", metadata["description"])
 
     epub.write_epub(output_path, book)
     print(f"  Metadata saved to: {output_path}")

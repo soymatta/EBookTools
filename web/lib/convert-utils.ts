@@ -1,53 +1,76 @@
 import { PDFDocument } from "pdf-lib"
 import JSZip from "jszip"
+import { getEPUBChapters } from "./epub-parser"
+
+/** pdf-lib standard fonts are WinAnsi: characters outside Latin-1 cannot be drawn. */
+function toWinAnsi(text: string): { text: string; dropped: number } {
+  let dropped = 0
+  let out = ""
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0
+    if (code === 9 || code === 10) { out += ch; continue }
+    if (code === 0x0a || (code >= 0x20 && code <= 0x7e) || (code >= 0xa1 && code <= 0xff)) {
+      out += ch
+      continue
+    }
+    if (/\s/.test(ch)) { out += " "; continue }
+    dropped++
+  }
+  return { text: out, dropped }
+}
 
 export async function epubToPDF(file: File): Promise<Blob> {
-  const arrayBuffer = await file.arrayBuffer()
-  const zip = await JSZip.loadAsync(arrayBuffer)
+  // Spine order, nav/cover/notes skipped — the same canonical reader the TTS
+  // tool uses. Reading the ZIP listing directly produced TOC-first, randomly
+  // ordered PDFs.
+  const chapters = await getEPUBChapters(file)
+  if (chapters.length === 0) {
+    throw new Error("No readable chapters found in this EPUB")
+  }
 
   const pdfDoc = await PDFDocument.create()
+  const font = await pdfDoc.embedFont("Helvetica")
+  const fontSize = 12
+  const margin = 50
+  const maxWidth = 595.28 - margin * 2
 
-  const htmlFiles = Object.keys(zip.files).filter(
-    (name) =>
-      name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm")
-  )
+  let droppedChars = 0
+  let totalChars = 0
 
-  for (const htmlFile of htmlFiles) {
-    const content = await zip.file(htmlFile)?.async("text")
-    if (!content) continue
+  for (const chapter of chapters) {
+    const title = toWinAnsi(chapter.title)
+    const sanitized = toWinAnsi(chapter.text)
+    droppedChars += sanitized.dropped + title.dropped
+    totalChars += chapter.text.length + chapter.title.length
+    const heading = title.text.trim()
+    const body = sanitized.text.trim()
+    if (!heading && !body) continue
 
-    const text = extractTextFromHTML(content)
-    if (text.trim()) {
-      const page = pdfDoc.addPage([595.28, 841.89])
-      const font = await pdfDoc.embedFont("Helvetica")
-      const fontSize = 12
-      const margin = 50
-      const maxWidth = page.getWidth() - margin * 2
+    const lines = heading
+      ? [heading, "", ...wrapText(body, font, fontSize, maxWidth)]
+      : wrapText(body, font, fontSize, maxWidth)
+    let page = pdfDoc.addPage([595.28, 841.89])
+    let y = page.getHeight() - margin
 
-      const lines = wrapText(text, font, fontSize, maxWidth)
-      let y = page.getHeight() - margin
-
-      for (const line of lines) {
-        if (y < margin) {
-          const newPage = pdfDoc.addPage([595.28, 841.89])
-          y = newPage.getHeight() - margin
-          newPage.drawText(line, { x: margin, y, size: fontSize, font })
-        } else {
-          page.drawText(line, { x: margin, y, size: fontSize, font })
-        }
-        y -= fontSize * 1.5
+    for (const line of lines) {
+      if (y < margin) {
+        page = pdfDoc.addPage([595.28, 841.89])
+        y = page.getHeight() - margin
       }
+      if (line.trim()) page.drawText(line, { x: margin, y, size: fontSize, font })
+      y -= fontSize * 1.5
     }
+  }
+
+  if (totalChars > 0 && droppedChars / totalChars > 0.02) {
+    throw new Error(
+      `This EPUB uses characters outside the Latin-1 range (${droppedChars.toLocaleString()} unsupported characters). ` +
+      "The built-in PDF font cannot draw them; convert in a tool with Unicode font embedding."
+    )
   }
 
   const bytes = await pdfDoc.save()
   return new Blob([bytes.slice().buffer as ArrayBuffer], { type: "application/pdf" })
-}
-
-function extractTextFromHTML(html: string): string {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(html, "text/html")
-  return doc.body?.textContent || ""
 }
 
 function wrapText(
@@ -101,9 +124,14 @@ export async function pdfToEPUB(file: File): Promise<Blob> {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i)
     const content = await page.getTextContent()
-    const pageText = content.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
+    // Keep the PDF's own line breaks (hasEOL) so paragraphs survive; joining
+    // every item with a space collapsed each page into one paragraph.
+    let pageText = ""
+    for (const item of content.items) {
+      if (!("str" in item)) continue
+      pageText += item.str
+      pageText += "hasEOL" in item && item.hasEOL ? "\n" : " "
+    }
 
     if (!pageText.trim()) continue
 

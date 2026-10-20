@@ -20,7 +20,7 @@ export const COMPRESSION_LEVELS: Record<CompressionLevel, {
   },
   strong: {
     label: "Strong",
-    description: "Maximum compression. Slowest. ~20-40% smaller. Same quality.",
+    description: "Maximum compression. Slowest. ~20-40% smaller. Re-encodes large JPEGs (EPUB).",
     pdf: { useObjectStreams: true, objectsPerTick: 10 },
     epubZipLevel: 9,
   },

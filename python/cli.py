@@ -6,7 +6,10 @@ All processing happens locally, no external APIs.
 
 import argparse
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from compress import compress_books
 from tts import ebook_to_audio, list_voices, preview_voice
@@ -33,19 +36,19 @@ def main():
     )
 
     # tts
-    tts_parser = subparsers.add_parser("tts", help="Convert ebook to audio")
+    tts_parser = subparsers.add_parser("tts", help="Convert ebook to audio (offline, local voices)")
     tts_parser.add_argument("file", help="Ebook file to convert")
     tts_parser.add_argument("-o", "--output", help="Output audio file path")
-    tts_parser.add_argument("-v", "--voice", type=int, help="Voice ID (use 'list-voices' to see options)")
+    tts_parser.add_argument("-v", "--voice", type=int, help="Voice index (use 'list-voices' to see options)")
     tts_parser.add_argument("-s", "--speed", type=float, default=1.0, help="Speech speed (default: 1.0)")
     tts_parser.add_argument("--volume", type=float, default=1.0, help="Volume (default: 1.0)")
 
     # list-voices
-    subparsers.add_parser("list-voices", help="List available TTS voices")
+    subparsers.add_parser("list-voices", help="List available local TTS voices")
 
     # preview-voice
-    preview_parser = subparsers.add_parser("preview-voice", help="Preview a TTS voice")
-    preview_parser.add_argument("-v", "--voice", type=int, help="Voice ID")
+    preview_parser = subparsers.add_parser("preview-voice", help="Preview a local TTS voice")
+    preview_parser.add_argument("-v", "--voice", type=int, help="Voice index")
     preview_parser.add_argument("-s", "--speed", type=float, default=1.0)
     preview_parser.add_argument("--volume", type=float, default=1.0)
 
@@ -66,10 +69,12 @@ def main():
     meta_parser.add_argument("--description", help="Set description")
     meta_parser.add_argument("--language", help="Set language")
     meta_parser.add_argument("--isbn", help="Set ISBN/identifier")
+    meta_parser.add_argument("--publisher", help="Set publisher")
+    meta_parser.add_argument("--date", help="Set publication date/year")
     meta_parser.add_argument("-o", "--output", help="Output file path")
 
     # autoname
-    autoname_parser = subparsers.add_parser("autoname", help="Rename books using metadata from APIs")
+    autoname_parser = subparsers.add_parser("autoname", help="Rename books using embedded metadata (offline)")
     autoname_parser.add_argument("files", nargs="+", help="Files to rename")
     autoname_parser.add_argument(
         "-f", "--format", default="{title} - {author}",
@@ -94,7 +99,7 @@ def main():
         ebook_to_audio(
             args.file,
             output_path=args.output,
-            voice_id=args.voice,
+            voice=args.voice,
             speed=args.speed,
             volume=args.volume,
         )
@@ -103,7 +108,7 @@ def main():
         list_voices()
 
     elif args.command == "preview-voice":
-        preview_voice(voice_id=args.voice, speed=args.speed, volume=args.volume)
+        preview_voice(voice=args.voice, speed=args.speed, volume=args.volume)
 
     elif args.command == "convert":
         ext = Path(args.file).suffix.lower()
@@ -132,8 +137,16 @@ def main():
                 updates["language"] = args.language
             if args.isbn:
                 updates["identifier"] = args.isbn
+            if args.publisher:
+                updates["publisher"] = args.publisher
+            if args.date:
+                updates["date"] = args.date
 
             if updates:
+                if Path(args.file).suffix.lower() == ".pdf":
+                    unsupported = [key for key in ("publisher", "date") if key in updates]
+                    if unsupported:
+                        print(f"  Note: {', '.join(unsupported)} not stored in PDF docinfo; EPUB only.")
                 set_metadata(args.file, updates, args.output)
             else:
                 print("No metadata fields to update. Use --title, --author, etc.")

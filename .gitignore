@@ -7,5 +7,8 @@ __pycache__/
 dist/
 build/
 *.log
+.opencode_session_dump*
+*.tsbuildinfo
 .DS_Store
 Thumbs.db
+web/next-env.d.ts
