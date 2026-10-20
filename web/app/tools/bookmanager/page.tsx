@@ -63,7 +63,7 @@ function BookManagerPageContent() {
     return () => {
       if (url) URL.revokeObjectURL(url)
     }
-  }, [metadata])
+  }, [metadata?.coverUrl])
 
   const loadMetadata = async (file: File) => {
     setSelectedFile(file)
